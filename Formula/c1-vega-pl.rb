@@ -1,17 +1,17 @@
 class C1VegaPl < Formula
-  desc "Local PII-anonymizing proxy for Claude Code (Polish)"
+  desc "Local PII-anonymizing proxy for Claude Code (PL)"
   homepage "https://copernicusone.com/vega"
-  version "0.1.0-rc.5"
+  version "0.2.2"
   license :cannot_represent
 
   on_macos do
     on_arm do
-      url "https://github.com/copernicusone/homebrew-vega/releases/download/v0.1.0-rc.5/c1-vega-pl-0.1.0-rc.5-aarch64-apple-darwin.tar.gz"
-      sha256 "3e8925793ba91da1697b5570626b13b084f4c83830ffbfe91d6f7d59708708d1"
+      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-pl-v0.2.2/c1-vega-pl-0.2.2-aarch64-apple-darwin.tar.gz"
+      sha256 "6c8600333711deef15ae94019fa6f76f59dd22e9a1df1d159aafcb12d60efb3d"
     end
     on_intel do
-      url "https://github.com/copernicusone/homebrew-vega/releases/download/v0.1.0-rc.5/c1-vega-pl-0.1.0-rc.5-x86_64-apple-darwin.tar.gz"
-      sha256 "80d1791e15d30c2902b9d82ea40fbdcc1f6c5108ca13812050f50b7efcc86b40"
+      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-pl-v0.2.2/c1-vega-pl-0.2.2-x86_64-apple-darwin.tar.gz"
+      sha256 "f93e82d53695635942202733a9c20c2cb757c00a851618691915d0c442be4917"
     end
   end
 
@@ -41,7 +41,7 @@ class C1VegaPl < Formula
   end
 
   test do
-    assert_match "c1-vega-pl", shell_output("#{bin}/c1-vega-pl --version")
+    assert_match "c1-vega", shell_output("#{bin}/c1-vega-pl --version")
     shell_output("#{bin}/c1-vega-pl --help")
     shell_output("#{bin}/c1-vega-pl license status")
     shell_output("#{bin}/c1-vega-pl install-shell --dry-run")
