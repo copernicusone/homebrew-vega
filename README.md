@@ -25,7 +25,7 @@ $env:C1_VEGA_LICENSE_KEY="<your-key>"
 irm https://raw.githubusercontent.com/copernicusone/homebrew-vega/main/install.ps1 | iex
 ```
 
-## Alternative: Homebrew (macOS only)
+## Alternative: Homebrew (macOS & Linux)
 
 ```bash
 brew tap copernicusone/vega

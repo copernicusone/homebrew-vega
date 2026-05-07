@@ -15,6 +15,17 @@ class C1VegaEn < Formula
     end
   end
 
+  on_linux do
+    on_arm do
+      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-en-v0.1.2/c1-vega-en-0.1.2-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "PLACEHOLDER_AARCH64_LINUX_GNU"
+    end
+    on_intel do
+      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-en-v0.1.2/c1-vega-en-0.1.2-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "PLACEHOLDER_X86_64_LINUX_GNU"
+    end
+  end
+
   def install
     bin.install "c1-vega-en"
   end

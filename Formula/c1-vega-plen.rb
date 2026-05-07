@@ -15,6 +15,17 @@ class C1VegaPlen < Formula
     end
   end
 
+  on_linux do
+    on_arm do
+      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-plen-v0.1.1/c1-vega-plen-0.1.1-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "8e34d5fd84f4acaec39ea9b1941b104f116c15b719ccdf44fdc36aebd9ba8f7b"
+    end
+    on_intel do
+      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-plen-v0.1.1/c1-vega-plen-0.1.1-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "e439227387c173df44cb8f8e8b12e5813a2ce4caba90f79918bec658355df9a5"
+    end
+  end
+
   def install
     bin.install "c1-vega-plen"
   end
