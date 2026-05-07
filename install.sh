@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# c1-vega-plen install script for macOS and Linux.
+# c1-vega-pl install script for macOS.
 # Usage:
 #   curl -fsSL <INSTALL_SCRIPT_URL> | C1_VEGA_LICENSE_KEY=<key> sh
 # Modes (mutually exclusive): default install, --upgrade, --uninstall.
@@ -15,27 +15,22 @@ set -euo pipefail
 # --- constants ----------------------------------------------------------------
 
 readonly INSTALL_DIR="$HOME/.c1-vega"
-readonly BIN_PATH="$INSTALL_DIR/bin/c1-vega-plen"
+readonly BIN_PATH="$INSTALL_DIR/bin/c1-vega-pl"
 readonly INSTALL_JSON="$INSTALL_DIR/var/install.json"
-readonly RC_BLOCK_BEGIN="# >>> c1-vega >>>"
-readonly RC_BLOCK_END="# <<< c1-vega <<<"
-# Override with C1_VEGA_REPO= to point at a different repo during development.
-readonly REPO="${C1_VEGA_REPO:-copernicusone/homebrew-vega}"
-readonly LICENSE_KEY_PEPPER="c1-vega-install-v1"
-readonly MIN_MACOS_MAJOR=12
-
-detect_os() {
-  case "$(uname -s)" in
-    Darwin) echo "macos" ;;
-    Linux)  echo "linux" ;;
-    *)      echo "error: unsupported OS ($(uname -s)). Windows: use install.ps1" >&2; exit 1 ;;
-  esac
-}
-readonly DETECTED_OS="$(detect_os)"
-
-# Legacy launchd identifiers — only referenced when tearing down old installs.
+readonly LOG_PATH="$INSTALL_DIR/var/logs/proxy.log"
 readonly PLIST_LABEL="com.copernicusone.c1-vega"
 readonly PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
+readonly RC_BLOCK_BEGIN="# >>> c1-vega >>>"
+readonly RC_BLOCK_END="# <<< c1-vega <<<"
+# Source repo is private; binaries and install.sh are mirrored to the public
+# Homebrew tap (`copernicusone/homebrew-vega`). Override with C1_VEGA_REPO=
+# during dev to point at a private repo (only works with auth-bearing curl).
+readonly REPO="${C1_VEGA_REPO:-copernicusone/homebrew-vega}"
+readonly PROXY_HOST="127.0.0.1:8787"
+readonly PROXY_BASE_URL="http://${PROXY_HOST}"
+readonly PROXY_HEALTH_URL="${PROXY_BASE_URL}/health"
+readonly LICENSE_KEY_PEPPER="c1-vega-install-v1"
+readonly MIN_MACOS_MAJOR=12
 
 REPO_ROOT_GUESS="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd)" || REPO_ROOT_GUESS=""
 readonly REPO_ROOT_GUESS
@@ -44,7 +39,7 @@ readonly REPO_ROOT_GUESS
 
 usage() {
   cat <<EOF
-c1-vega-plen install script for macOS and Linux.
+c1-vega-pl install script for macOS.
 
 Usage:
   curl -fsSL <INSTALL_SCRIPT_URL> | C1_VEGA_LICENSE_KEY=<key> sh
@@ -83,21 +78,17 @@ parse_args() {
 # --- preflight ----------------------------------------------------------------
 
 preflight() {
-  if [ "$DETECTED_OS" = "macos" ]; then
-    local ver major
-    ver="$(sw_vers -productVersion)"
-    major="${ver%%.*}"
-    if [ "$major" -lt "$MIN_MACOS_MAJOR" ]; then
-      echo "error: macOS $MIN_MACOS_MAJOR (Monterey) or later required (have $ver)" >&2
-      exit 1
-    fi
-  elif [ "$DETECTED_OS" = "linux" ]; then
-    for cmd in curl tar sha256sum; do
-      if ! command -v "$cmd" >/dev/null 2>&1; then
-        echo "error: $cmd required but not found" >&2
-        exit 1
-      fi
-    done
+  if [ "$(uname -s)" != "Darwin" ]; then
+    echo "error: this script supports macOS only (detected $(uname -s))" >&2
+    exit 1
+  fi
+
+  local ver major
+  ver="$(sw_vers -productVersion)"
+  major="${ver%%.*}"
+  if [ "$major" -lt "$MIN_MACOS_MAJOR" ]; then
+    echo "error: macOS $MIN_MACOS_MAJOR (Monterey) or later required (have $ver)" >&2
+    exit 1
   fi
 
   case "$MODE" in
@@ -108,7 +99,7 @@ preflight() {
         exit 1
       fi
       if [ -f "$INSTALL_JSON" ]; then
-        echo "error: c1-vega-plen already installed at $INSTALL_DIR" >&2
+        echo "error: c1-vega-pl already installed at $INSTALL_DIR" >&2
         echo "       use --upgrade or --uninstall" >&2
         exit 1
       fi
@@ -133,21 +124,10 @@ preflight() {
 detect_arch() {
   local m
   m="$(uname -m)"
-  case "$DETECTED_OS" in
-    macos)
-      case "$m" in
-        arm64)   echo "aarch64-apple-darwin" ;;
-        x86_64)  echo "x86_64-apple-darwin" ;;
-        *)       echo "unsupported arch: $m" >&2; return 1 ;;
-      esac
-      ;;
-    linux)
-      case "$m" in
-        x86_64)   echo "x86_64-unknown-linux-gnu" ;;
-        aarch64)  echo "aarch64-unknown-linux-gnu" ;;
-        *)        echo "unsupported arch: $m" >&2; return 1 ;;
-      esac
-      ;;
+  case "$m" in
+    arm64)   echo "aarch64-apple-darwin" ;;
+    x86_64)  echo "x86_64-apple-darwin" ;;
+    *)       echo "unsupported arch: $m" >&2; return 1 ;;
   esac
 }
 
@@ -192,7 +172,7 @@ resolve_release_tag() {
 download_artifacts() {
   local tag="$1" triple="$2" work="$3"
   local version="${tag#v}"
-  local archive="c1-vega-plen-${version}-${triple}.tar.gz"
+  local archive="c1-vega-pl-${version}-${triple}.tar.gz"
   local base="https://github.com/$REPO/releases/download/$tag"
 
   curl -fsSL --proto '=https' --tlsv1.2 --max-time 120 \
@@ -204,10 +184,7 @@ download_artifacts() {
 # Args: <work_dir> <archive_filename>
 verify_checksum() {
   local work="$1" archive="$2"
-  case "$DETECTED_OS" in
-    macos) ( cd "$work" && shasum -a 256 -c SHA256SUMS --ignore-missing | grep -q "$archive: OK" ) ;;
-    linux) ( cd "$work" && sha256sum -c SHA256SUMS --ignore-missing 2>/dev/null | grep -q "$archive: OK" ) ;;
-  esac
+  ( cd "$work" && shasum -a 256 -c SHA256SUMS --ignore-missing | grep -q "$archive: OK" )
 }
 
 # --- extract ------------------------------------------------------------------
@@ -219,21 +196,17 @@ extract_binary() {
   work="$(mktemp -d -t c1vega-extract-XXXXXX)"
   tar -xzf "$archive" -C "$work"
 
-  # The Plan D2 package.sh wraps the binary in c1-vega-plen-<v>-<triple>/. Find it
+  # The Plan D2 package.sh wraps the binary in c1-vega-pl-<v>-<triple>/. Find it
   # robustly: look for the named binary anywhere under work.
   local found
-  if [ "$DETECTED_OS" = "macos" ]; then
-    found="$(find "$work" -type f -name 'c1-vega-plen' -perm +111 2>/dev/null | head -1)"
-  else
-    found="$(find "$work" -type f -name 'c1-vega-plen' -perm /111 2>/dev/null | head -1)"
-  fi
+  found="$(find "$work" -type f -name 'c1-vega-pl' -perm +111 2>/dev/null | head -1)"
   if [ -z "$found" ]; then
-    # Fallback: any file named c1-vega-plen (perm bit may be lost on Linux runners
+    # Fallback: any file named c1-vega-pl (perm bit may be lost on Linux runners
     # or when -perm +111 is unsupported by find).
-    found="$(find "$work" -type f -name 'c1-vega-plen' | head -1)"
+    found="$(find "$work" -type f -name 'c1-vega-pl' | head -1)"
   fi
   if [ -z "$found" ]; then
-    echo "error: c1-vega-plen not found in archive $archive" >&2
+    echo "error: c1-vega-pl not found in archive $archive" >&2
     rm -rf "$work"
     return 1
   fi
@@ -245,9 +218,7 @@ extract_binary() {
 
   # Strip Gatekeeper quarantine so first run isn't blocked. Unsigned binary
   # trust model: user already accepted curl|sh trust by pasting the command.
-  if [ "$DETECTED_OS" = "macos" ]; then
-    xattr -d com.apple.quarantine "$BIN_PATH" 2>/dev/null || true
-  fi
+  xattr -d com.apple.quarantine "$BIN_PATH" 2>/dev/null || true
 }
 
 # --- license-key hashing + install.json ---------------------------------------
@@ -282,7 +253,8 @@ write_install_json() {
   "installed_at": "$now",
   "license_key_hash": "$key_hash",
   "binary_sha256": "$bin_sha",
-  "shell_files_patched": $shell_files
+  "shell_files_patched": $shell_files,
+  "launchd_label": "$PLIST_LABEL"
 }
 EOF
 }
@@ -326,11 +298,7 @@ patch_shell_rc() {
   if [ -z "$block" ]; then
     block="$RC_BLOCK_BEGIN
 export PATH=\"\$HOME/.c1-vega/bin:\$PATH\"
-# Wrap \`claude\` to always route through the c1-vega proxy and print the
-# privacy banner. Skip when already inside a Claude Code session.
-if [ -z \"\${CLAUDECODE:-}\" ] && command -v c1-vega-plen >/dev/null 2>&1; then
-  claude() { command c1-vega-plen run -- claude \"\$@\"; }
-fi
+export ANTHROPIC_BASE_URL=\"http://127.0.0.1:8787\"
 $RC_BLOCK_END"
   fi
 
@@ -379,41 +347,55 @@ unpatch_shell_rc() {
   mv "$tmp" "$rc"
 }
 
-# --- claude code slash commands ----------------------------------------------
+# --- launchd ------------------------------------------------------------------
 
-# Install c1-vega-* slash commands into ~/.claude/commands/ so the user gets
-# autocomplete inside Claude Code (e.g. /c1-vega-help). No-op when the dir
-# does not exist (user not on Claude Code) or when source files are missing.
-install_claude_commands() {
-  local target="$HOME/.claude/commands"
-  local source="$REPO_ROOT_GUESS/install/claude-commands"
-  [ -d "$source" ] || return 0
-  [ -d "$HOME/.claude" ] || return 0
-  mkdir -p "$target"
-  local f
-  for f in "$source"/c1-vega-*.md; do
-    [ -f "$f" ] || continue
-    cp "$f" "$target/$(basename "$f")"
-  done
-}
-
-uninstall_claude_commands() {
-  local target="$HOME/.claude/commands"
-  [ -d "$target" ] || return 0
-  rm -f "$target"/c1-vega-*.md
-}
-
-# --- legacy launchd cleanup --------------------------------------------------
-
-# Old installs registered a launchd plist at $PLIST_PATH and ran the proxy as
-# a daemon on 127.0.0.1:8787. The wrapper-based flow makes the daemon
-# redundant, so on install/upgrade/uninstall we tear it down if present.
-remove_legacy_launchd() {
-  [ "$DETECTED_OS" = "macos" ] || return 0
-  if [ -f "$PLIST_PATH" ] || launchctl print "gui/$UID/$PLIST_LABEL" >/dev/null 2>&1; then
-    launchctl bootout "gui/$UID" "$PLIST_PATH" 2>/dev/null || true
-    rm -f "$PLIST_PATH"
+render_plist() {
+  mkdir -p "$(dirname "$PLIST_PATH")"
+  local template="$REPO_ROOT_GUESS/scripts/install/launchd.plist.template"
+  if [ -f "$template" ]; then
+    sed -e "s|__BIN_PATH__|$BIN_PATH|g" \
+        -e "s|__LOG_PATH__|$LOG_PATH|g" \
+        "$template" > "$PLIST_PATH"
+  else
+    cat > "$PLIST_PATH" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$PLIST_LABEL</string>
+  <key>ProgramArguments</key>
+  <array><string>$BIN_PATH</string><string>start</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>StandardOutPath</key><string>$LOG_PATH</string>
+  <key>StandardErrorPath</key><string>$LOG_PATH</string>
+  <key>EnvironmentVariables</key><dict><key>RUST_LOG</key><string>info</string></dict>
+  <key>ProcessType</key><string>Background</string>
+</dict>
+</plist>
+EOF
   fi
+  chmod 644 "$PLIST_PATH"
+}
+
+load_launchd() {
+  launchctl bootstrap "gui/$UID" "$PLIST_PATH"
+  launchctl kickstart "gui/$UID/$PLIST_LABEL"
+}
+
+unload_launchd() {
+  launchctl bootout "gui/$UID" "$PLIST_PATH" 2>/dev/null || true
+}
+
+smoke_test() {
+  local i
+  for i in 1 2 3 4 5; do
+    if curl -sf --max-time 5 "$PROXY_HEALTH_URL" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
 }
 
 # --- main ---------------------------------------------------------------------
@@ -424,13 +406,13 @@ main() {
   if [ "$DRY_RUN" -eq 1 ]; then
     case "$MODE" in
       install)
-        echo "[DRY-RUN] would: detect arch, resolve latest release, download tarball + SHA256SUMS, verify checksum, extract to $INSTALL_DIR/bin/, run \`c1-vega-plen activate\`, write $INSTALL_JSON, patch shell rc files, install Claude Code slash commands, remove any legacy launchd plist"
+        echo "[DRY-RUN] would: detect arch, resolve latest release, download tarball + SHA256SUMS, verify checksum, extract to $INSTALL_DIR/bin/, run \`c1-vega-pl activate\`, write $INSTALL_JSON, patch $HOME/.zshrc, render+load $PLIST_PATH, smoke-test ${PROXY_HEALTH_URL}"
         ;;
       upgrade)
-        echo "[DRY-RUN] would: download new release, replace $BIN_PATH, refresh slash commands, remove any legacy launchd plist"
+        echo "[DRY-RUN] would: download new release, replace $BIN_PATH, kickstart launchd"
         ;;
       uninstall)
-        echo "[DRY-RUN] would: remove legacy launchd plist if present, unpatch shell rc files, remove slash commands, rm -rf $INSTALL_DIR"
+        echo "[DRY-RUN] would: bootout launchd, rm $PLIST_PATH, unpatch shell rc files, rm -rf $INSTALL_DIR"
         ;;
     esac
     return 0
@@ -466,16 +448,12 @@ install() {
   work="$(mktemp -d -t c1vega-install-XXXXXX)"
   trap 'rm -rf "$work"' EXIT
 
-  archive="c1-vega-plen-${version}-${triple}.tar.gz"
+  archive="c1-vega-pl-${version}-${triple}.tar.gz"
   download_artifacts "$tag" "$triple" "$work"
   verify_checksum "$work" "$archive"
 
   extract_binary "$work/$archive"
-  if [ "$DETECTED_OS" = "macos" ]; then
-    bin_sha="$(shasum -a 256 "$BIN_PATH" | awk '{print $1}')"
-  else
-    bin_sha="$(sha256sum "$BIN_PATH" | awk '{print $1}')"
-  fi
+  bin_sha="$(shasum -a 256 "$BIN_PATH" | awk '{print $1}')"
 
   if ! run_activate; then
     rm -rf "$INSTALL_DIR"
@@ -488,14 +466,8 @@ install() {
 
   local patched=()
   local rc
-  local rc_order
-  if [ "$DETECTED_OS" = "linux" ]; then
-    rc_order="$HOME/.bashrc $HOME/.zshrc"
-  else
-    rc_order="$HOME/.zshrc $HOME/.bashrc"
-  fi
-  for rc in $rc_order; do
-    if [ -f "$rc" ] || { [ "$DETECTED_OS" = "macos" ] && [ "$rc" = "$HOME/.zshrc" ]; }; then
+  for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+    if [ -f "$rc" ] || [ "$rc" = "$HOME/.zshrc" ]; then
       patch_shell_rc "$rc"
       [ -f "$rc" ] && patched+=("\"$rc\"")
     fi
@@ -507,11 +479,19 @@ install() {
   patched_json+="]"
   write_install_json "$version" "$tag" "$triple" "$C1_VEGA_LICENSE_KEY" "$patched_json" "$bin_sha"
 
-  install_claude_commands
+  render_plist
+  load_launchd
 
-  # Drop any plist left over from a previous install — wrapper flow runs the
-  # proxy on demand instead of via launchd.
-  remove_legacy_launchd
+  if ! smoke_test; then
+    unload_launchd
+    rm -f "$PLIST_PATH"
+    echo "error: proxy did not become healthy within 10 s" >&2
+    if [ -f "$LOG_PATH" ]; then
+      echo "--- last 50 log lines ---" >&2
+      tail -50 "$LOG_PATH" >&2 || true
+    fi
+    return 1
+  fi
 
   print_success_message "$version"
 }
@@ -519,12 +499,10 @@ install() {
 print_success_message() {
   local version="$1"
   cat <<EOF
-✓ c1-vega-plen v$version installed.
+✓ c1-vega-pl v$version installed and running on http://127.0.0.1:8787
 
-Open a new terminal and run \`claude\` — the c1-vega proxy starts on demand,
-prints a privacy banner, and routes Claude Code through it.
-
-Inside Claude Code, /c1-vega-help lists the in-chat directives.
+Open a new terminal and run \`claude\` — Claude Code will route through the
+proxy automatically.
 
 Tip: \`history -d \$(history 1)\` removes this command (with your license key)
 from shell history.
@@ -548,7 +526,8 @@ write_install_json_raw() {
   "installed_at": "$now",
   "license_key_hash": "$key_hash",
   "binary_sha256": "$bin_sha",
-  "shell_files_patched": $shell_files
+  "shell_files_patched": $shell_files,
+  "launchd_label": "$PLIST_LABEL"
 }
 EOF
 }
@@ -568,15 +547,11 @@ upgrade() {
   work="$(mktemp -d -t c1vega-upgrade-XXXXXX)"
   trap 'rm -rf "$work"' EXIT
 
-  archive="c1-vega-plen-${version}-${triple}.tar.gz"
+  archive="c1-vega-pl-${version}-${triple}.tar.gz"
   download_artifacts "$tag" "$triple" "$work"
   verify_checksum "$work" "$archive"
   extract_binary "$work/$archive"
-  if [ "$DETECTED_OS" = "macos" ]; then
-    bin_sha="$(shasum -a 256 "$BIN_PATH" | awk '{print $1}')"
-  else
-    bin_sha="$(sha256sum "$BIN_PATH" | awk '{print $1}')"
-  fi
+  bin_sha="$(shasum -a 256 "$BIN_PATH" | awk '{print $1}')"
 
   if [ -n "${C1_VEGA_LICENSE_KEY:-}" ]; then
     old_hash="$(read_install_json license_key_hash)"
@@ -604,10 +579,15 @@ upgrade() {
     write_install_json "$version" "$tag" "$triple" "$C1_VEGA_LICENSE_KEY" "$patched_json" "$bin_sha"
   fi
 
-  install_claude_commands
-  remove_legacy_launchd
+  render_plist
+  launchctl kickstart -k "gui/$UID/$PLIST_LABEL" 2>/dev/null || load_launchd
 
-  echo "✓ Upgraded c1-vega-plen to v$version."
+  if ! smoke_test; then
+    echo "error: proxy not healthy after upgrade" >&2
+    return 1
+  fi
+
+  echo "✓ Upgraded c1-vega-pl to v$version."
 }
 
 # --- uninstall flow -----------------------------------------------------------
@@ -618,9 +598,8 @@ uninstall() {
     return 0
   fi
 
-  remove_legacy_launchd
-
-  uninstall_claude_commands
+  unload_launchd
+  rm -f "$PLIST_PATH"
 
   local shell_files
   if command -v jq >/dev/null 2>&1; then
@@ -637,18 +616,10 @@ uninstall() {
 
   rm -rf "$INSTALL_DIR"
 
-  local vault_path
-  if [ "$DETECTED_OS" = "macos" ]; then
-    vault_path="~/Library/Application Support/c1-vega/"
-  else
-    vault_path="${XDG_DATA_HOME:-~/.local/share}/c1-vega/"
-  fi
-
   cat <<EOF
-✓ Removed binary, shell-rc patches, Claude Code slash commands, and any
-  legacy launchd plist.
+✓ Removed binary, launchd unit, and shell-rc patches.
 
-Note: Vault at $vault_path left intact.
+Note: Vault at ~/Library/Application Support/c1-vega/ left intact.
 \`rm -rf\` it manually for a clean slate.
 
 Backups of patched shell rc files saved as *.c1vega-uninstall-backup-<ts>.
