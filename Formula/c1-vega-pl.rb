@@ -19,12 +19,36 @@ class C1VegaPl < Formula
     bin.install "c1-vega-pl"
   end
 
-  service do
-    run [opt_bin/"c1-vega-pl", "start"]
-    keep_alive successful_exit: false
-    log_path var/"log/c1-vega-pl.log"
-    error_log_path var/"log/c1-vega-pl.log"
-    environment_variables RUST_LOG: "info"
+  def post_install
+    # Drop a `claude` shell wrapper so the proxy starts on demand and prints the
+    # privacy banner. Sourced from the user's ~/.zshrc per the caveats below.
+    install_dir = Pathname.new(Dir.home)/".c1-vega"
+    install_dir.mkpath
+    wrapper = install_dir/"claude-wrapper.sh"
+    wrapper.write <<~SH
+      # Managed by c1-vega — do not edit manually
+      # Wraps `claude` so it routes through the c1-vega proxy and prints the
+      # privacy banner. Skipped when already inside a Claude Code session
+      # (CLAUDECODE=1) to prevent recursion in nested Bash tool calls.
+      if [ -z "${CLAUDECODE:-}" ] && command -v c1-vega-pl >/dev/null 2>&1; then
+        claude() { command c1-vega-pl run -- claude "$@"; }
+      fi
+    SH
+    wrapper.chmod 0644
+
+    # Install Claude Code slash commands so the user gets autocomplete for the
+    # in-chat `c1-vega:*` directives. No-op when ~/.claude is absent.
+    claude_dir = Pathname.new(Dir.home)/".claude"
+    return unless claude_dir.directory?
+
+    commands_dir = claude_dir/"commands"
+    commands_dir.mkpath
+    tap_commands = tap.path/"install/claude-commands"
+    return unless tap_commands.directory?
+
+    tap_commands.glob("c1-vega-*.md").each do |src|
+      FileUtils.cp(src, commands_dir/src.basename)
+    end
   end
 
   def caveats
@@ -32,11 +56,27 @@ class C1VegaPl < Formula
       Activate your license:
         c1-vega-pl activate <your-license-key>
 
-      Then point Claude Code at the proxy:
-        export ANTHROPIC_BASE_URL="http://127.0.0.1:8787"
+      Wire the shell wrapper so plain `claude` routes through the proxy and
+      prints the privacy banner. Add to ~/.zshrc (or ~/.bashrc):
 
-      Start the proxy as a launchd service:
-        brew services start c1-vega-pl
+        export PATH="$HOME/.c1-vega/bin:$PATH"
+        source "$HOME/.c1-vega/claude-wrapper.sh"
+
+      Open a new terminal and run:
+        claude
+
+      Inside Claude Code, slash commands (autocomplete enabled):
+        /c1-vega-help    /c1-vega-status   /c1-vega-stats
+        /c1-vega-mappings /c1-vega-settings /c1-vega-disable
+        /c1-vega-enable   /c1-vega-tech-bundle
+
+      Note: if you previously ran `c1-vega-pl install-shell`, ~/.zshrc sources
+      ~/.c1-vega/shell-init.sh (env var only). Replace that source line with
+      claude-wrapper.sh above to enable the `claude` wrapper.
+
+      Migrating from the launchd daemon: this version no longer registers a
+      LaunchAgent. If you ran `brew services start c1-vega-pl` previously,
+      run `brew services stop c1-vega-pl` once to remove the leftover unit.
     EOS
   end
 

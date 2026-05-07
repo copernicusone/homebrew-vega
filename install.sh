@@ -17,20 +17,18 @@ set -euo pipefail
 readonly INSTALL_DIR="$HOME/.c1-vega"
 readonly BIN_PATH="$INSTALL_DIR/bin/c1-vega-pl"
 readonly INSTALL_JSON="$INSTALL_DIR/var/install.json"
-readonly LOG_PATH="$INSTALL_DIR/var/logs/proxy.log"
-readonly PLIST_LABEL="com.copernicusone.c1-vega"
-readonly PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
 readonly RC_BLOCK_BEGIN="# >>> c1-vega >>>"
 readonly RC_BLOCK_END="# <<< c1-vega <<<"
 # Source repo is private; binaries and install.sh are mirrored to the public
 # Homebrew tap (`copernicusone/homebrew-vega`). Override with C1_VEGA_REPO=
 # during dev to point at a private repo (only works with auth-bearing curl).
 readonly REPO="${C1_VEGA_REPO:-copernicusone/homebrew-vega}"
-readonly PROXY_HOST="127.0.0.1:8787"
-readonly PROXY_BASE_URL="http://${PROXY_HOST}"
-readonly PROXY_HEALTH_URL="${PROXY_BASE_URL}/health"
 readonly LICENSE_KEY_PEPPER="c1-vega-install-v1"
 readonly MIN_MACOS_MAJOR=12
+
+# Legacy launchd identifiers — only referenced when tearing down old installs.
+readonly PLIST_LABEL="com.copernicusone.c1-vega"
+readonly PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
 
 REPO_ROOT_GUESS="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd)" || REPO_ROOT_GUESS=""
 readonly REPO_ROOT_GUESS
@@ -253,8 +251,7 @@ write_install_json() {
   "installed_at": "$now",
   "license_key_hash": "$key_hash",
   "binary_sha256": "$bin_sha",
-  "shell_files_patched": $shell_files,
-  "launchd_label": "$PLIST_LABEL"
+  "shell_files_patched": $shell_files
 }
 EOF
 }
@@ -298,7 +295,11 @@ patch_shell_rc() {
   if [ -z "$block" ]; then
     block="$RC_BLOCK_BEGIN
 export PATH=\"\$HOME/.c1-vega/bin:\$PATH\"
-export ANTHROPIC_BASE_URL=\"http://127.0.0.1:8787\"
+# Wrap \`claude\` to always route through the c1-vega proxy and print the
+# privacy banner. Skip when already inside a Claude Code session.
+if [ -z \"\${CLAUDECODE:-}\" ] && command -v c1-vega-pl >/dev/null 2>&1; then
+  claude() { command c1-vega-pl run -- claude \"\$@\"; }
+fi
 $RC_BLOCK_END"
   fi
 
@@ -347,55 +348,40 @@ unpatch_shell_rc() {
   mv "$tmp" "$rc"
 }
 
-# --- launchd ------------------------------------------------------------------
+# --- claude code slash commands ----------------------------------------------
 
-render_plist() {
-  mkdir -p "$(dirname "$PLIST_PATH")"
-  local template="$REPO_ROOT_GUESS/scripts/install/launchd.plist.template"
-  if [ -f "$template" ]; then
-    sed -e "s|__BIN_PATH__|$BIN_PATH|g" \
-        -e "s|__LOG_PATH__|$LOG_PATH|g" \
-        "$template" > "$PLIST_PATH"
-  else
-    cat > "$PLIST_PATH" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>$PLIST_LABEL</string>
-  <key>ProgramArguments</key>
-  <array><string>$BIN_PATH</string><string>start</string></array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
-  <key>StandardOutPath</key><string>$LOG_PATH</string>
-  <key>StandardErrorPath</key><string>$LOG_PATH</string>
-  <key>EnvironmentVariables</key><dict><key>RUST_LOG</key><string>info</string></dict>
-  <key>ProcessType</key><string>Background</string>
-</dict>
-</plist>
-EOF
-  fi
-  chmod 644 "$PLIST_PATH"
-}
-
-load_launchd() {
-  launchctl bootstrap "gui/$UID" "$PLIST_PATH"
-  launchctl kickstart "gui/$UID/$PLIST_LABEL"
-}
-
-unload_launchd() {
-  launchctl bootout "gui/$UID" "$PLIST_PATH" 2>/dev/null || true
-}
-
-smoke_test() {
-  local i
-  for i in 1 2 3 4 5; do
-    if curl -sf --max-time 5 "$PROXY_HEALTH_URL" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 2
+# Install c1-vega-* slash commands into ~/.claude/commands/ so the user gets
+# autocomplete inside Claude Code (e.g. /c1-vega-help). No-op when the dir
+# does not exist (user not on Claude Code) or when source files are missing.
+install_claude_commands() {
+  local target="$HOME/.claude/commands"
+  local source="$REPO_ROOT_GUESS/install/claude-commands"
+  [ -d "$source" ] || return 0
+  [ -d "$HOME/.claude" ] || return 0
+  mkdir -p "$target"
+  local f
+  for f in "$source"/c1-vega-*.md; do
+    [ -f "$f" ] || continue
+    cp "$f" "$target/$(basename "$f")"
   done
-  return 1
+}
+
+uninstall_claude_commands() {
+  local target="$HOME/.claude/commands"
+  [ -d "$target" ] || return 0
+  rm -f "$target"/c1-vega-*.md
+}
+
+# --- legacy launchd cleanup --------------------------------------------------
+
+# Old installs registered a launchd plist at $PLIST_PATH and ran the proxy as
+# a daemon on 127.0.0.1:8787. The wrapper-based flow makes the daemon
+# redundant, so on install/upgrade/uninstall we tear it down if present.
+remove_legacy_launchd() {
+  if [ -f "$PLIST_PATH" ] || launchctl print "gui/$UID/$PLIST_LABEL" >/dev/null 2>&1; then
+    launchctl bootout "gui/$UID" "$PLIST_PATH" 2>/dev/null || true
+    rm -f "$PLIST_PATH"
+  fi
 }
 
 # --- main ---------------------------------------------------------------------
@@ -406,13 +392,13 @@ main() {
   if [ "$DRY_RUN" -eq 1 ]; then
     case "$MODE" in
       install)
-        echo "[DRY-RUN] would: detect arch, resolve latest release, download tarball + SHA256SUMS, verify checksum, extract to $INSTALL_DIR/bin/, run \`c1-vega-pl activate\`, write $INSTALL_JSON, patch $HOME/.zshrc, render+load $PLIST_PATH, smoke-test ${PROXY_HEALTH_URL}"
+        echo "[DRY-RUN] would: detect arch, resolve latest release, download tarball + SHA256SUMS, verify checksum, extract to $INSTALL_DIR/bin/, run \`c1-vega-pl activate\`, write $INSTALL_JSON, patch $HOME/.zshrc, install Claude Code slash commands, remove any legacy launchd plist"
         ;;
       upgrade)
-        echo "[DRY-RUN] would: download new release, replace $BIN_PATH, kickstart launchd"
+        echo "[DRY-RUN] would: download new release, replace $BIN_PATH, refresh slash commands, remove any legacy launchd plist"
         ;;
       uninstall)
-        echo "[DRY-RUN] would: bootout launchd, rm $PLIST_PATH, unpatch shell rc files, rm -rf $INSTALL_DIR"
+        echo "[DRY-RUN] would: remove legacy launchd plist if present, unpatch shell rc files, remove slash commands, rm -rf $INSTALL_DIR"
         ;;
     esac
     return 0
@@ -479,19 +465,11 @@ install() {
   patched_json+="]"
   write_install_json "$version" "$tag" "$triple" "$C1_VEGA_LICENSE_KEY" "$patched_json" "$bin_sha"
 
-  render_plist
-  load_launchd
+  install_claude_commands
 
-  if ! smoke_test; then
-    unload_launchd
-    rm -f "$PLIST_PATH"
-    echo "error: proxy did not become healthy within 10 s" >&2
-    if [ -f "$LOG_PATH" ]; then
-      echo "--- last 50 log lines ---" >&2
-      tail -50 "$LOG_PATH" >&2 || true
-    fi
-    return 1
-  fi
+  # Drop any plist left over from a previous install — wrapper flow runs the
+  # proxy on demand instead of via launchd.
+  remove_legacy_launchd
 
   print_success_message "$version"
 }
@@ -499,10 +477,12 @@ install() {
 print_success_message() {
   local version="$1"
   cat <<EOF
-✓ c1-vega-pl v$version installed and running on http://127.0.0.1:8787
+✓ c1-vega-pl v$version installed.
 
-Open a new terminal and run \`claude\` — Claude Code will route through the
-proxy automatically.
+Open a new terminal and run \`claude\` — the c1-vega proxy starts on demand,
+prints a privacy banner, and routes Claude Code through it.
+
+Inside Claude Code, /c1-vega-help lists the in-chat directives.
 
 Tip: \`history -d \$(history 1)\` removes this command (with your license key)
 from shell history.
@@ -526,8 +506,7 @@ write_install_json_raw() {
   "installed_at": "$now",
   "license_key_hash": "$key_hash",
   "binary_sha256": "$bin_sha",
-  "shell_files_patched": $shell_files,
-  "launchd_label": "$PLIST_LABEL"
+  "shell_files_patched": $shell_files
 }
 EOF
 }
@@ -579,13 +558,8 @@ upgrade() {
     write_install_json "$version" "$tag" "$triple" "$C1_VEGA_LICENSE_KEY" "$patched_json" "$bin_sha"
   fi
 
-  render_plist
-  launchctl kickstart -k "gui/$UID/$PLIST_LABEL" 2>/dev/null || load_launchd
-
-  if ! smoke_test; then
-    echo "error: proxy not healthy after upgrade" >&2
-    return 1
-  fi
+  install_claude_commands
+  remove_legacy_launchd
 
   echo "✓ Upgraded c1-vega-pl to v$version."
 }
@@ -598,8 +572,9 @@ uninstall() {
     return 0
   fi
 
-  unload_launchd
-  rm -f "$PLIST_PATH"
+  remove_legacy_launchd
+
+  uninstall_claude_commands
 
   local shell_files
   if command -v jq >/dev/null 2>&1; then
@@ -617,7 +592,8 @@ uninstall() {
   rm -rf "$INSTALL_DIR"
 
   cat <<EOF
-✓ Removed binary, launchd unit, and shell-rc patches.
+✓ Removed binary, shell-rc patches, Claude Code slash commands, and any
+  legacy launchd plist.
 
 Note: Vault at ~/Library/Application Support/c1-vega/ left intact.
 \`rm -rf\` it manually for a clean slate.
