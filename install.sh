@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# c1-vega-pl install script for macOS.
+# c1-vega-plen install script for macOS.
 # Usage:
 #   curl -fsSL <INSTALL_SCRIPT_URL> | C1_VEGA_LICENSE_KEY=<key> sh
 # Modes (mutually exclusive): default install, --upgrade, --uninstall.
@@ -15,7 +15,7 @@ set -euo pipefail
 # --- constants ----------------------------------------------------------------
 
 readonly INSTALL_DIR="$HOME/.c1-vega"
-readonly BIN_PATH="$INSTALL_DIR/bin/c1-vega-pl"
+readonly BIN_PATH="$INSTALL_DIR/bin/c1-vega-plen"
 readonly INSTALL_JSON="$INSTALL_DIR/var/install.json"
 readonly RC_BLOCK_BEGIN="# >>> c1-vega >>>"
 readonly RC_BLOCK_END="# <<< c1-vega <<<"
@@ -35,7 +35,7 @@ readonly REPO_ROOT_GUESS
 
 usage() {
   cat <<EOF
-c1-vega-pl install script for macOS.
+c1-vega-plen install script for macOS.
 
 Usage:
   curl -fsSL <INSTALL_SCRIPT_URL> | C1_VEGA_LICENSE_KEY=<key> sh
@@ -95,7 +95,7 @@ preflight() {
         exit 1
       fi
       if [ -f "$INSTALL_JSON" ]; then
-        echo "error: c1-vega-pl already installed at $INSTALL_DIR" >&2
+        echo "error: c1-vega-plen already installed at $INSTALL_DIR" >&2
         echo "       use --upgrade or --uninstall" >&2
         exit 1
       fi
@@ -168,7 +168,7 @@ resolve_release_tag() {
 download_artifacts() {
   local tag="$1" triple="$2" work="$3"
   local version="${tag#v}"
-  local archive="c1-vega-pl-${version}-${triple}.tar.gz"
+  local archive="c1-vega-plen-${version}-${triple}.tar.gz"
   local base="https://github.com/$REPO/releases/download/$tag"
 
   curl -fsSL --proto '=https' --tlsv1.2 --max-time 120 \
@@ -192,17 +192,17 @@ extract_binary() {
   work="$(mktemp -d -t c1vega-extract-XXXXXX)"
   tar -xzf "$archive" -C "$work"
 
-  # The Plan D2 package.sh wraps the binary in c1-vega-pl-<v>-<triple>/. Find it
+  # The Plan D2 package.sh wraps the binary in c1-vega-plen-<v>-<triple>/. Find it
   # robustly: look for the named binary anywhere under work.
   local found
-  found="$(find "$work" -type f -name 'c1-vega-pl' -perm +111 2>/dev/null | head -1)"
+  found="$(find "$work" -type f -name 'c1-vega-plen' -perm +111 2>/dev/null | head -1)"
   if [ -z "$found" ]; then
-    # Fallback: any file named c1-vega-pl (perm bit may be lost on Linux runners
+    # Fallback: any file named c1-vega-plen (perm bit may be lost on Linux runners
     # or when -perm +111 is unsupported by find).
-    found="$(find "$work" -type f -name 'c1-vega-pl' | head -1)"
+    found="$(find "$work" -type f -name 'c1-vega-plen' | head -1)"
   fi
   if [ -z "$found" ]; then
-    echo "error: c1-vega-pl not found in archive $archive" >&2
+    echo "error: c1-vega-plen not found in archive $archive" >&2
     rm -rf "$work"
     return 1
   fi
@@ -295,8 +295,8 @@ patch_shell_rc() {
 export PATH=\"\$HOME/.c1-vega/bin:\$PATH\"
 # Wrap \`claude\` to always route through the c1-vega proxy and print the
 # privacy banner. Skip when already inside a Claude Code session.
-if [ -z \"\${CLAUDECODE:-}\" ] && command -v c1-vega-pl >/dev/null 2>&1; then
-  claude() { command c1-vega-pl run -- claude \"\$@\"; }
+if [ -z \"\${CLAUDECODE:-}\" ] && command -v c1-vega-plen >/dev/null 2>&1; then
+  claude() { command c1-vega-plen run -- claude \"\$@\"; }
 fi
 $RC_BLOCK_END"
   fi
@@ -390,7 +390,7 @@ main() {
   if [ "$DRY_RUN" -eq 1 ]; then
     case "$MODE" in
       install)
-        echo "[DRY-RUN] would: detect arch, resolve latest release, download tarball + SHA256SUMS, verify checksum, extract to $INSTALL_DIR/bin/, run \`c1-vega-pl activate\`, write $INSTALL_JSON, patch $HOME/.zshrc, install Claude Code slash commands, remove any legacy launchd plist"
+        echo "[DRY-RUN] would: detect arch, resolve latest release, download tarball + SHA256SUMS, verify checksum, extract to $INSTALL_DIR/bin/, run \`c1-vega-plen activate\`, write $INSTALL_JSON, patch $HOME/.zshrc, install Claude Code slash commands, remove any legacy launchd plist"
         ;;
       upgrade)
         echo "[DRY-RUN] would: download new release, replace $BIN_PATH, refresh slash commands, remove any legacy launchd plist"
@@ -432,7 +432,7 @@ install() {
   work="$(mktemp -d -t c1vega-install-XXXXXX)"
   trap 'rm -rf "$work"' EXIT
 
-  archive="c1-vega-pl-${version}-${triple}.tar.gz"
+  archive="c1-vega-plen-${version}-${triple}.tar.gz"
   download_artifacts "$tag" "$triple" "$work"
   verify_checksum "$work" "$archive"
 
@@ -475,7 +475,7 @@ install() {
 print_success_message() {
   local version="$1"
   cat <<EOF
-✓ c1-vega-pl v$version installed.
+✓ c1-vega-plen v$version installed.
 
 Open a new terminal and run \`claude\` — the c1-vega proxy starts on demand,
 prints a privacy banner, and routes Claude Code through it.
@@ -524,7 +524,7 @@ upgrade() {
   work="$(mktemp -d -t c1vega-upgrade-XXXXXX)"
   trap 'rm -rf "$work"' EXIT
 
-  archive="c1-vega-pl-${version}-${triple}.tar.gz"
+  archive="c1-vega-plen-${version}-${triple}.tar.gz"
   download_artifacts "$tag" "$triple" "$work"
   verify_checksum "$work" "$archive"
   extract_binary "$work/$archive"
@@ -559,7 +559,7 @@ upgrade() {
   install_claude_commands
   remove_legacy_launchd
 
-  echo "✓ Upgraded c1-vega-pl to v$version."
+  echo "✓ Upgraded c1-vega-plen to v$version."
 }
 
 # --- uninstall flow -----------------------------------------------------------
