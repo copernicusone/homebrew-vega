@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# c1-vega-plen install script for macOS.
+# c1-vega-plen install script for macOS and Linux.
 # Usage:
 #   curl -fsSL <INSTALL_SCRIPT_URL> | C1_VEGA_LICENSE_KEY=<key> sh
 # Modes (mutually exclusive): default install, --upgrade, --uninstall.
@@ -24,6 +24,15 @@ readonly REPO="${C1_VEGA_REPO:-copernicusone/homebrew-vega}"
 readonly LICENSE_KEY_PEPPER="c1-vega-install-v1"
 readonly MIN_MACOS_MAJOR=12
 
+detect_os() {
+  case "$(uname -s)" in
+    Darwin) echo "macos" ;;
+    Linux)  echo "linux" ;;
+    *)      echo "error: unsupported OS ($(uname -s)). Windows: use install.ps1" >&2; exit 1 ;;
+  esac
+}
+readonly DETECTED_OS="$(detect_os)"
+
 # Legacy launchd identifiers — only referenced when tearing down old installs.
 readonly PLIST_LABEL="com.copernicusone.c1-vega"
 readonly PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
@@ -35,7 +44,7 @@ readonly REPO_ROOT_GUESS
 
 usage() {
   cat <<EOF
-c1-vega-plen install script for macOS.
+c1-vega-plen install script for macOS and Linux.
 
 Usage:
   curl -fsSL <INSTALL_SCRIPT_URL> | C1_VEGA_LICENSE_KEY=<key> sh
@@ -74,17 +83,21 @@ parse_args() {
 # --- preflight ----------------------------------------------------------------
 
 preflight() {
-  if [ "$(uname -s)" != "Darwin" ]; then
-    echo "error: this script supports macOS only (detected $(uname -s))" >&2
-    exit 1
-  fi
-
-  local ver major
-  ver="$(sw_vers -productVersion)"
-  major="${ver%%.*}"
-  if [ "$major" -lt "$MIN_MACOS_MAJOR" ]; then
-    echo "error: macOS $MIN_MACOS_MAJOR (Monterey) or later required (have $ver)" >&2
-    exit 1
+  if [ "$DETECTED_OS" = "macos" ]; then
+    local ver major
+    ver="$(sw_vers -productVersion)"
+    major="${ver%%.*}"
+    if [ "$major" -lt "$MIN_MACOS_MAJOR" ]; then
+      echo "error: macOS $MIN_MACOS_MAJOR (Monterey) or later required (have $ver)" >&2
+      exit 1
+    fi
+  elif [ "$DETECTED_OS" = "linux" ]; then
+    for cmd in curl tar sha256sum; do
+      if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "error: $cmd required but not found" >&2
+        exit 1
+      fi
+    done
   fi
 
   case "$MODE" in
@@ -120,10 +133,21 @@ preflight() {
 detect_arch() {
   local m
   m="$(uname -m)"
-  case "$m" in
-    arm64)   echo "aarch64-apple-darwin" ;;
-    x86_64)  echo "x86_64-apple-darwin" ;;
-    *)       echo "unsupported arch: $m" >&2; return 1 ;;
+  case "$DETECTED_OS" in
+    macos)
+      case "$m" in
+        arm64)   echo "aarch64-apple-darwin" ;;
+        x86_64)  echo "x86_64-apple-darwin" ;;
+        *)       echo "unsupported arch: $m" >&2; return 1 ;;
+      esac
+      ;;
+    linux)
+      case "$m" in
+        x86_64)   echo "x86_64-unknown-linux-gnu" ;;
+        aarch64)  echo "aarch64-unknown-linux-gnu" ;;
+        *)        echo "unsupported arch: $m" >&2; return 1 ;;
+      esac
+      ;;
   esac
 }
 
@@ -180,7 +204,10 @@ download_artifacts() {
 # Args: <work_dir> <archive_filename>
 verify_checksum() {
   local work="$1" archive="$2"
-  ( cd "$work" && shasum -a 256 -c SHA256SUMS --ignore-missing | grep -q "$archive: OK" )
+  case "$DETECTED_OS" in
+    macos) ( cd "$work" && shasum -a 256 -c SHA256SUMS --ignore-missing | grep -q "$archive: OK" ) ;;
+    linux) ( cd "$work" && sha256sum -c SHA256SUMS --ignore-missing 2>/dev/null | grep -q "$archive: OK" ) ;;
+  esac
 }
 
 # --- extract ------------------------------------------------------------------
@@ -195,7 +222,11 @@ extract_binary() {
   # The Plan D2 package.sh wraps the binary in c1-vega-plen-<v>-<triple>/. Find it
   # robustly: look for the named binary anywhere under work.
   local found
-  found="$(find "$work" -type f -name 'c1-vega-plen' -perm +111 2>/dev/null | head -1)"
+  if [ "$DETECTED_OS" = "macos" ]; then
+    found="$(find "$work" -type f -name 'c1-vega-plen' -perm +111 2>/dev/null | head -1)"
+  else
+    found="$(find "$work" -type f -name 'c1-vega-plen' -perm /111 2>/dev/null | head -1)"
+  fi
   if [ -z "$found" ]; then
     # Fallback: any file named c1-vega-plen (perm bit may be lost on Linux runners
     # or when -perm +111 is unsupported by find).
@@ -214,7 +245,9 @@ extract_binary() {
 
   # Strip Gatekeeper quarantine so first run isn't blocked. Unsigned binary
   # trust model: user already accepted curl|sh trust by pasting the command.
-  xattr -d com.apple.quarantine "$BIN_PATH" 2>/dev/null || true
+  if [ "$DETECTED_OS" = "macos" ]; then
+    xattr -d com.apple.quarantine "$BIN_PATH" 2>/dev/null || true
+  fi
 }
 
 # --- license-key hashing + install.json ---------------------------------------
@@ -376,6 +409,7 @@ uninstall_claude_commands() {
 # a daemon on 127.0.0.1:8787. The wrapper-based flow makes the daemon
 # redundant, so on install/upgrade/uninstall we tear it down if present.
 remove_legacy_launchd() {
+  [ "$DETECTED_OS" = "macos" ] || return 0
   if [ -f "$PLIST_PATH" ] || launchctl print "gui/$UID/$PLIST_LABEL" >/dev/null 2>&1; then
     launchctl bootout "gui/$UID" "$PLIST_PATH" 2>/dev/null || true
     rm -f "$PLIST_PATH"
@@ -390,7 +424,7 @@ main() {
   if [ "$DRY_RUN" -eq 1 ]; then
     case "$MODE" in
       install)
-        echo "[DRY-RUN] would: detect arch, resolve latest release, download tarball + SHA256SUMS, verify checksum, extract to $INSTALL_DIR/bin/, run \`c1-vega-plen activate\`, write $INSTALL_JSON, patch $HOME/.zshrc, install Claude Code slash commands, remove any legacy launchd plist"
+        echo "[DRY-RUN] would: detect arch, resolve latest release, download tarball + SHA256SUMS, verify checksum, extract to $INSTALL_DIR/bin/, run \`c1-vega-plen activate\`, write $INSTALL_JSON, patch shell rc files, install Claude Code slash commands, remove any legacy launchd plist"
         ;;
       upgrade)
         echo "[DRY-RUN] would: download new release, replace $BIN_PATH, refresh slash commands, remove any legacy launchd plist"
@@ -437,7 +471,11 @@ install() {
   verify_checksum "$work" "$archive"
 
   extract_binary "$work/$archive"
-  bin_sha="$(shasum -a 256 "$BIN_PATH" | awk '{print $1}')"
+  if [ "$DETECTED_OS" = "macos" ]; then
+    bin_sha="$(shasum -a 256 "$BIN_PATH" | awk '{print $1}')"
+  else
+    bin_sha="$(sha256sum "$BIN_PATH" | awk '{print $1}')"
+  fi
 
   if ! run_activate; then
     rm -rf "$INSTALL_DIR"
@@ -450,8 +488,14 @@ install() {
 
   local patched=()
   local rc
-  for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
-    if [ -f "$rc" ] || [ "$rc" = "$HOME/.zshrc" ]; then
+  local rc_order
+  if [ "$DETECTED_OS" = "linux" ]; then
+    rc_order="$HOME/.bashrc $HOME/.zshrc"
+  else
+    rc_order="$HOME/.zshrc $HOME/.bashrc"
+  fi
+  for rc in $rc_order; do
+    if [ -f "$rc" ] || { [ "$DETECTED_OS" = "macos" ] && [ "$rc" = "$HOME/.zshrc" ]; }; then
       patch_shell_rc "$rc"
       [ -f "$rc" ] && patched+=("\"$rc\"")
     fi
@@ -528,7 +572,11 @@ upgrade() {
   download_artifacts "$tag" "$triple" "$work"
   verify_checksum "$work" "$archive"
   extract_binary "$work/$archive"
-  bin_sha="$(shasum -a 256 "$BIN_PATH" | awk '{print $1}')"
+  if [ "$DETECTED_OS" = "macos" ]; then
+    bin_sha="$(shasum -a 256 "$BIN_PATH" | awk '{print $1}')"
+  else
+    bin_sha="$(sha256sum "$BIN_PATH" | awk '{print $1}')"
+  fi
 
   if [ -n "${C1_VEGA_LICENSE_KEY:-}" ]; then
     old_hash="$(read_install_json license_key_hash)"
@@ -589,11 +637,18 @@ uninstall() {
 
   rm -rf "$INSTALL_DIR"
 
+  local vault_path
+  if [ "$DETECTED_OS" = "macos" ]; then
+    vault_path="~/Library/Application Support/c1-vega/"
+  else
+    vault_path="${XDG_DATA_HOME:-~/.local/share}/c1-vega/"
+  fi
+
   cat <<EOF
 ✓ Removed binary, shell-rc patches, Claude Code slash commands, and any
   legacy launchd plist.
 
-Note: Vault at ~/Library/Application Support/c1-vega/ left intact.
+Note: Vault at $vault_path left intact.
 \`rm -rf\` it manually for a clean slate.
 
 Backups of patched shell rc files saved as *.c1vega-uninstall-backup-<ts>.
