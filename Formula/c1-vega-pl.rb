@@ -1,17 +1,17 @@
 class C1VegaPl < Formula
   desc "Local PII-anonymizing proxy for Claude Code (PL)"
   homepage "https://copernicusone.com/vega"
-  version "0.2.2"
+  version "0.2.3"
   license :cannot_represent
 
   on_macos do
     on_arm do
-      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-pl-v0.2.2/c1-vega-pl-0.2.2-aarch64-apple-darwin.tar.gz"
-      sha256 "6c8600333711deef15ae94019fa6f76f59dd22e9a1df1d159aafcb12d60efb3d"
+      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-pl-v0.2.3/c1-vega-pl-0.2.3-aarch64-apple-darwin.tar.gz"
+      sha256 "500fa0730bcd6a275e8eb347322be5671c18b21084e473791343ac93b9e258da"
     end
     on_intel do
-      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-pl-v0.2.2/c1-vega-pl-0.2.2-x86_64-apple-darwin.tar.gz"
-      sha256 "f93e82d53695635942202733a9c20c2cb757c00a851618691915d0c442be4917"
+      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-pl-v0.2.3/c1-vega-pl-0.2.3-x86_64-apple-darwin.tar.gz"
+      sha256 "192050c8375bbefdd3cfa789ce0e757d123aaaf82c398a8046db59de29982336"
     end
   end
 
