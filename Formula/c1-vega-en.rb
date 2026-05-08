@@ -1,7 +1,6 @@
 class C1VegaEn < Formula
   desc "Local PII-anonymizing proxy for Claude Code (EN)"
   homepage "https://copernicusone.com/vega"
-  version "0.1.3"
   license :cannot_represent
 
   on_macos do

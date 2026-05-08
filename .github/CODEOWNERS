@@ -1,0 +1,21 @@
+# CODEOWNERS for copernicusone/homebrew-vega
+#
+# Required reviewers for protected paths. Used by branch protection
+# rule "require code owner review" so any PR touching these areas
+# blocks until an owner approves.
+#
+# https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything in the repo
+*                       @mkania-copernicus
+
+# Formula files: highest blast radius (controls what every brew install runs)
+/Formula/               @mkania-copernicus
+
+# Release/install scripts: run on user machines with shell privileges
+/install.sh             @mkania-copernicus
+/install.ps1            @mkania-copernicus
+/install/               @mkania-copernicus
+
+# CI + repo configuration: anything here can bypass other gates
+/.github/               @mkania-copernicus
