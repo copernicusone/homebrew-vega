@@ -1,28 +1,17 @@
 class C1VegaEn < Formula
   desc "Local PII-anonymizing proxy for Claude Code (EN)"
   homepage "https://copernicusone.com/vega"
-  version "0.1.2"
+  version "0.1.3"
   license :cannot_represent
 
   on_macos do
     on_arm do
-      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-en-v0.1.2/c1-vega-en-0.1.2-aarch64-apple-darwin.tar.gz"
-      sha256 "ad94bd0d6b762c89cafb7210402fb3b2bca1aad99f2f4bbaa5ebf1675473947e"
+      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-en-v0.1.3/c1-vega-en-0.1.3-aarch64-apple-darwin.tar.gz"
+      sha256 "0bcea3bc2d6347568cd35719cb4606a906a96db0305b59bb83d11a86b3fceb0b"
     end
     on_intel do
-      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-en-v0.1.2/c1-vega-en-0.1.2-x86_64-apple-darwin.tar.gz"
-      sha256 "d5d4b46f93fc295f2a852f7c52ad799155b2d5b9221b34794019abb95d7659f8"
-    end
-  end
-
-  on_linux do
-    on_arm do
-      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-en-v0.1.2/c1-vega-en-0.1.2-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "PLACEHOLDER_AARCH64_LINUX_GNU"
-    end
-    on_intel do
-      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-en-v0.1.2/c1-vega-en-0.1.2-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "PLACEHOLDER_X86_64_LINUX_GNU"
+      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-en-v0.1.3/c1-vega-en-0.1.3-x86_64-apple-darwin.tar.gz"
+      sha256 "f7805fcc1443fcfcc175136a28ac29810cb4e24c790f3f50a4d36fac14b1c7a6"
     end
   end
 
@@ -30,32 +19,12 @@ class C1VegaEn < Formula
     bin.install "c1-vega-en"
   end
 
-  def post_install
-    install_dir = Pathname.new(Dir.home)/".c1-vega"
-    install_dir.mkpath
-    wrapper = install_dir/"claude-wrapper.sh"
-    wrapper.write <<~SH
-      # Managed by c1-vega — do not edit manually
-      # Wraps `claude` so it routes through the c1-vega proxy and prints the
-      # privacy banner. Skipped when already inside a Claude Code session
-      # (CLAUDECODE=1) to prevent recursion in nested Bash tool calls.
-      if [ -z "${CLAUDECODE:-}" ] && command -v c1-vega-en >/dev/null 2>&1; then
-        claude() { command c1-vega-en run -- claude "$@"; }
-      fi
-    SH
-    wrapper.chmod 0644
-
-    claude_dir = Pathname.new(Dir.home)/".claude"
-    return unless claude_dir.directory?
-
-    commands_dir = claude_dir/"commands"
-    commands_dir.mkpath
-    tap_commands = tap.path/"install/claude-commands"
-    return unless tap_commands.directory?
-
-    tap_commands.glob("c1-vega-*.md").each do |src|
-      FileUtils.cp(src, commands_dir/src.basename)
-    end
+  service do
+    run [opt_bin/"c1-vega-en", "start"]
+    keep_alive successful_exit: false
+    log_path var/"log/c1-vega-en.log"
+    error_log_path var/"log/c1-vega-en.log"
+    environment_variables RUST_LOG: "info"
   end
 
   def caveats
@@ -63,27 +32,11 @@ class C1VegaEn < Formula
       Activate your license:
         c1-vega-en activate <your-license-key>
 
-      Wire the shell wrapper so plain `claude` routes through the proxy and
-      prints the privacy banner. Add to ~/.zshrc (or ~/.bashrc):
+      Then point Claude Code at the proxy:
+        export ANTHROPIC_BASE_URL="http://127.0.0.1:8787"
 
-        export PATH="$HOME/.c1-vega/bin:$PATH"
-        source "$HOME/.c1-vega/claude-wrapper.sh"
-
-      Open a new terminal and run:
-        claude
-
-      Inside Claude Code, slash commands (autocomplete enabled):
-        /c1-vega-help    /c1-vega-status   /c1-vega-stats
-        /c1-vega-mappings /c1-vega-settings /c1-vega-disable
-        /c1-vega-enable   /c1-vega-tech-bundle
-
-      Note: if you previously ran `c1-vega-en install-shell`, ~/.zshrc sources
-      ~/.c1-vega/shell-init.sh (env var only). Replace that source line with
-      claude-wrapper.sh above to enable the `claude` wrapper.
-
-      Migrating from the launchd daemon: this version no longer registers a
-      LaunchAgent. If you ran `brew services start c1-vega-en` previously,
-      run `brew services stop c1-vega-en` once to remove the leftover unit.
+      Start the proxy as a launchd service:
+        brew services start c1-vega-en
     EOS
   end
 
