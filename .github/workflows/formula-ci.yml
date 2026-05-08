@@ -1,0 +1,95 @@
+name: formula-ci
+
+on:
+  pull_request:
+    paths:
+      - 'Formula/**'
+      - '.github/workflows/formula-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'Formula/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: formula-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: brew style + audit
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - name: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: tap from local checkout
+        run: |
+          set -euo pipefail
+          TAP_DIR="$(brew --repository)/Library/Taps/copernicusone/homebrew-vega"
+          mkdir -p "$(dirname "$TAP_DIR")"
+          ln -sfn "$GITHUB_WORKSPACE" "$TAP_DIR"
+
+      - name: brew style (formulae only)
+        run: |
+          set -euo pipefail
+          # Scope to Formula/ — install.sh / install.ps1 have separate linting needs.
+          for f in Formula/*.rb; do
+            name="$(basename "$f" .rb)"
+            brew style "copernicusone/vega/${name}"
+          done
+
+      - name: brew audit (closed-source friendly)
+        run: |
+          set -euo pipefail
+          # --except license: formulae use `license :cannot_represent` (closed-source)
+          # --skip-style: style already checked above
+          for f in Formula/*.rb; do
+            name="$(basename "$f" .rb)"
+            echo "::group::audit ${name}"
+            brew audit --strict --skip-style --except=license "copernicusone/vega/${name}"
+            echo "::endgroup::"
+          done
+
+      - name: verify URL/SHA pairs resolvable
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Lightweight check: each url:/sha256: pair points to an existing release asset.
+          # Does NOT download the tarball; just HEADs the asset metadata via API.
+          python3 - <<'PY'
+          import json, os, re, subprocess, sys, urllib.parse, urllib.request
+          token = os.environ["GH_TOKEN"]
+          fail = False
+          for path in sorted(os.listdir("Formula")):
+              if not path.endswith(".rb"):
+                  continue
+              text = open(f"Formula/{path}").read()
+              urls = re.findall(r'url\s+"(https://github\.com/[^"]+)"', text)
+              for u in urls:
+                  m = re.match(r"https://github\.com/([^/]+)/([^/]+)/releases/download/([^/]+)/(\S+)", u)
+                  if not m:
+                      print(f"::warning::non-release URL in {path}: {u}")
+                      continue
+                  owner, repo, tag, fname = m.groups()
+                  api = f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{urllib.parse.quote(tag)}"
+                  req = urllib.request.Request(api, headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"})
+                  try:
+                      with urllib.request.urlopen(req, timeout=15) as r:
+                          data = json.load(r)
+                  except Exception as e:
+                      print(f"::error file={path}::cannot fetch release {tag}: {e}")
+                      fail = True
+                      continue
+                  names = {a["name"] for a in data.get("assets", [])}
+                  if fname not in names:
+                      print(f"::error file={path}::asset '{fname}' missing from release {tag}")
+                      fail = True
+                  else:
+                      print(f"ok: {path} -> {tag}/{fname}")
+          sys.exit(1 if fail else 0)
+          PY
