@@ -18,6 +18,14 @@ curl -fsSL https://raw.githubusercontent.com/copernicusone/homebrew-vega/main/in
   | C1_VEGA_LICENSE_KEY=<your-key> sh
 ```
 
+After installation, open a new terminal and run `claude` or `codex`. The
+`codex` integration routes through Vega with ChatGPT auth by default; API-key
+mode is still available with:
+
+```bash
+c1-vega-plen run --client codex --codex-auth api -- codex
+```
+
 ### Windows (PowerShell)
 
 ```powershell
