@@ -7,15 +7,15 @@
 # https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
 
 # Default owner for everything in the repo
-*                       @mkania-copernicus
+*                       @mkania-copernicus @pkupisie @kedob5
 
 # Formula files: highest blast radius (controls what every brew install runs)
-/Formula/               @mkania-copernicus
+/Formula/               @mkania-copernicus @pkupisie @kedob5
 
 # Release/install scripts: run on user machines with shell privileges
-/install.sh             @mkania-copernicus
-/install.ps1            @mkania-copernicus
-/install/               @mkania-copernicus
+/install.sh             @mkania-copernicus @pkupisie @kedob5
+/install.ps1            @mkania-copernicus @pkupisie @kedob5
+/install/               @mkania-copernicus @pkupisie @kedob5
 
 # CI + repo configuration: anything here can bypass other gates
-/.github/               @mkania-copernicus
+/.github/               @mkania-copernicus @pkupisie @kedob5
