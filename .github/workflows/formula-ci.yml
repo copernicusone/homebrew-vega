@@ -19,27 +19,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          fetch-depth: 2
-
-      - name: detect Formula changes
-        id: changes
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BASE_SHA="${{ github.event.pull_request.base.sha }}"
-            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-          else
-            BASE_SHA="${{ github.event.before }}"
-            HEAD_SHA="${{ github.sha }}"
-          fi
-          if git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" 2>/dev/null | grep -qE '^(Formula/|\.github/workflows/formula-ci\.yml)'; then
-            echo "formula_changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "formula_changed=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No Formula/ or formula-ci changes — pass-through to satisfy required status check."
-          fi
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: tap from local checkout
         if: steps.changes.outputs.formula_changed == 'true'
