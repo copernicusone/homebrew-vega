@@ -2,13 +2,8 @@ name: formula-ci
 
 on:
   pull_request:
-    paths:
-      - 'Formula/**'
-      - '.github/workflows/formula-ci.yml'
   push:
     branches: [main]
-    paths:
-      - 'Formula/**'
 
 permissions:
   contents: read
@@ -27,6 +22,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: tap from local checkout
+        if: steps.changes.outputs.formula_changed == 'true'
         run: |
           set -euo pipefail
           TAP_DIR="$(brew --repository)/Library/Taps/copernicusone/homebrew-vega"
@@ -34,6 +30,7 @@ jobs:
           ln -sfn "$GITHUB_WORKSPACE" "$TAP_DIR"
 
       - name: brew style (formulae only)
+        if: steps.changes.outputs.formula_changed == 'true'
         run: |
           set -euo pipefail
           # Scope to Formula/ — install.sh / install.ps1 have separate linting needs.
@@ -43,6 +40,7 @@ jobs:
           done
 
       - name: brew audit (closed-source friendly)
+        if: steps.changes.outputs.formula_changed == 'true'
         run: |
           set -euo pipefail
           # --except license: formulae use `license :cannot_represent` (closed-source)
@@ -55,6 +53,7 @@ jobs:
           done
 
       - name: verify URL/SHA pairs resolvable
+        if: steps.changes.outputs.formula_changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
