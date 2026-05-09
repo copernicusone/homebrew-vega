@@ -299,6 +299,9 @@ patch_shell_rc() {
     block="$RC_BLOCK_BEGIN
 export PATH=\"\$HOME/.c1-vega/bin:\$PATH\"
 export ANTHROPIC_BASE_URL=\"http://127.0.0.1:8787\"
+codex() {
+  c1-vega-plen run --client codex --codex-auth chatgpt -- codex \"\$@\"
+}
 $RC_BLOCK_END"
   fi
 
@@ -501,8 +504,11 @@ print_success_message() {
   cat <<EOF
 ✓ c1-vega-plen v$version installed and running on http://127.0.0.1:8787
 
-Open a new terminal and run \`claude\` — Claude Code will route through the
-proxy automatically.
+Open a new terminal and run \`claude\` or \`codex\` — supported AI clients will
+route through the proxy automatically.
+
+The \`codex\` shell function uses ChatGPT auth by default. API-key mode remains
+available via \`c1-vega-plen run --client codex --codex-auth api -- codex\`.
 
 Tip: \`history -d \$(history 1)\` removes this command (with your license key)
 from shell history.
