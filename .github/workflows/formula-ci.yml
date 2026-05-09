@@ -2,13 +2,8 @@ name: formula-ci
 
 on:
   pull_request:
-    paths:
-      - 'Formula/**'
-      - '.github/workflows/formula-ci.yml'
   push:
     branches: [main]
-    paths:
-      - 'Formula/**'
 
 permissions:
   contents: read
@@ -25,8 +20,29 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 2
+
+      - name: detect Formula changes
+        id: changes
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE_SHA="${{ github.event.before }}"
+            HEAD_SHA="${{ github.sha }}"
+          fi
+          if git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" 2>/dev/null | grep -qE '^(Formula/|\.github/workflows/formula-ci\.yml)'; then
+            echo "formula_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "formula_changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Formula/ or formula-ci changes — pass-through to satisfy required status check."
+          fi
 
       - name: tap from local checkout
+        if: steps.changes.outputs.formula_changed == 'true'
         run: |
           set -euo pipefail
           TAP_DIR="$(brew --repository)/Library/Taps/copernicusone/homebrew-vega"
@@ -34,6 +50,7 @@ jobs:
           ln -sfn "$GITHUB_WORKSPACE" "$TAP_DIR"
 
       - name: brew style (formulae only)
+        if: steps.changes.outputs.formula_changed == 'true'
         run: |
           set -euo pipefail
           # Scope to Formula/ — install.sh / install.ps1 have separate linting needs.
@@ -43,6 +60,7 @@ jobs:
           done
 
       - name: brew audit (closed-source friendly)
+        if: steps.changes.outputs.formula_changed == 'true'
         run: |
           set -euo pipefail
           # --except license: formulae use `license :cannot_represent` (closed-source)
@@ -55,6 +73,7 @@ jobs:
           done
 
       - name: verify URL/SHA pairs resolvable
+        if: steps.changes.outputs.formula_changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
