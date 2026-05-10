@@ -11,11 +11,18 @@ Homebrew tap for [Copernicus One Vega](https://copernicusone.pl) — a local PII
 
 ## Quick Install
 
-### macOS / Linux
+### PLEN (recommended, macOS / Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/copernicusone/homebrew-vega/main/install.sh \
-  | C1_VEGA_LICENSE_KEY=<your-key> sh
+curl -fsSL https://raw.githubusercontent.com/copernicusone/homebrew-vega/main/install-plen.sh \
+  | C1_VEGA_LICENSE_KEY=<your-key> bash
+```
+
+### English-only (macOS / Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/copernicusone/homebrew-vega/main/install-en.sh \
+  | C1_VEGA_LICENSE_KEY=<your-key> bash
 ```
 
 After installation, open a new terminal and run `claude` or `codex`. The
@@ -39,7 +46,7 @@ irm https://raw.githubusercontent.com/copernicusone/homebrew-vega/main/install.p
 The PowerShell installer creates `claude.cmd` and `codex.cmd` wrappers in
 `~\.c1-vega\bin`.
 
-## Alternative: Homebrew (macOS & Linux)
+## Alternative: Homebrew (macOS / Linux)
 
 ```bash
 brew tap copernicusone/vega
