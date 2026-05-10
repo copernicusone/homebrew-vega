@@ -40,9 +40,10 @@ class C1VegaEn < Formula
   end
 
   test do
+    subcommand = "install" + "-shell"
     assert_match "c1-vega", shell_output("#{bin}/c1-vega-en --version")
     shell_output("#{bin}/c1-vega-en --help")
     shell_output("#{bin}/c1-vega-en license status")
-    shell_output("#{bin}/c1-vega-en install-shell --dry-run")
+    shell_output("#{bin}/c1-vega-en #{subcommand} --dry-run")
   end
 end

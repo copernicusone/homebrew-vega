@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# c1-vega-pl install script for macOS.
+# c1-vega-en install script for macOS.
 # Usage:
-#   curl -fsSL <INSTALL_SCRIPT_URL> | C1_VEGA_LICENSE_KEY=<key> sh
+#   curl -fsSL <INSTALL_SCRIPT_URL> | C1_VEGA_LICENSE_KEY=<key> bash
 # Modes (mutually exclusive): default install, --upgrade, --uninstall.
 # Composable: --version <tag>, --dry-run.
 #
@@ -15,14 +15,20 @@ set -euo pipefail
 # --- constants ----------------------------------------------------------------
 
 readonly INSTALL_DIR="$HOME/.c1-vega"
-readonly BIN_PATH="$INSTALL_DIR/bin/c1-vega-pl"
+readonly SKU_ID="c1-vega-en"
+readonly BINARY_NAME="c1-vega-en"
+readonly INSTALL_SCRIPT_NAME="install-en.sh"
+readonly SERVICE_BASENAME="c1-vega-en"
+readonly BIN_PATH="$INSTALL_DIR/bin/$BINARY_NAME"
 readonly INSTALL_JSON="$INSTALL_DIR/var/install.json"
 readonly LOG_PATH="$INSTALL_DIR/var/logs/proxy.log"
 readonly PLIST_LABEL="com.copernicusone.c1-vega"
 readonly PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
+readonly SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+readonly SYSTEMD_UNIT_PATH="$SYSTEMD_USER_DIR/$SERVICE_BASENAME.service"
 readonly RC_BLOCK_BEGIN="# >>> c1-vega >>>"
 readonly RC_BLOCK_END="# <<< c1-vega <<<"
-# Source repo is private; binaries and install.sh are mirrored to the public
+# Source repo is private; binaries and per-SKU installers are mirrored to the public
 # Homebrew tap (`copernicusone/homebrew-vega`). Override with C1_VEGA_REPO=
 # during dev to point at a private repo (only works with auth-bearing curl).
 readonly REPO="${C1_VEGA_REPO:-copernicusone/homebrew-vega}"
@@ -39,18 +45,18 @@ readonly REPO_ROOT_GUESS
 
 usage() {
   cat <<EOF
-c1-vega-pl install script for macOS.
+$BINARY_NAME install script for macOS and Linux.
 
 Usage:
-  curl -fsSL <INSTALL_SCRIPT_URL> | C1_VEGA_LICENSE_KEY=<key> sh
+  curl -fsSL https://raw.githubusercontent.com/copernicusone/c1-vega/main/$INSTALL_SCRIPT_NAME | C1_VEGA_LICENSE_KEY=ck_live_example bash
 
 Modes (mutually exclusive):
-  (default)        Full install: download, activate, configure, launchd.
+  (default)        Full install: download, activate, configure shell, start service when supported.
   --upgrade        In-place binary swap; preserve config and license.
-  --uninstall      Reverse install: launchd unload, files removed, zshrc reverted.
+  --uninstall      Reverse install: service unload, files removed, shell rc reverted.
 
 Composable:
-  --version <tag>  Pin to specific tag instead of latest.
+  --version $SKU_ID-v0.1.0  Pin to a specific $SKU_ID release tag.
   --dry-run        Print actions without executing.
   --help           This message.
 EOF
@@ -78,29 +84,37 @@ parse_args() {
 # --- preflight ----------------------------------------------------------------
 
 preflight() {
-  if [ "$(uname -s)" != "Darwin" ]; then
-    echo "error: this script supports macOS only (detected $(uname -s))" >&2
-    exit 1
-  fi
-
-  local ver major
-  ver="$(sw_vers -productVersion)"
-  major="${ver%%.*}"
-  if [ "$major" -lt "$MIN_MACOS_MAJOR" ]; then
-    echo "error: macOS $MIN_MACOS_MAJOR (Monterey) or later required (have $ver)" >&2
-    exit 1
-  fi
+  local os
+  os="$(detect_os)"
+  case "$os" in
+    Darwin)
+      local ver major
+      ver="$(sw_vers -productVersion)"
+      major="${ver%%.*}"
+      if [ "$major" -lt "$MIN_MACOS_MAJOR" ]; then
+        echo "error: macOS $MIN_MACOS_MAJOR (Monterey) or later required (have $ver)" >&2
+        exit 1
+      fi
+      ;;
+    Linux)
+      ;;
+    *)
+      echo "error: unsupported OS: $os" >&2
+      exit 1
+      ;;
+  esac
 
   case "$MODE" in
     install)
-      if [ -z "${C1_VEGA_LICENSE_KEY:-}" ]; then
-        echo "error: C1_VEGA_LICENSE_KEY env var required" >&2
-        echo "       run: curl -fsSL ... | C1_VEGA_LICENSE_KEY=<key> sh" >&2
+      if [ -f "$INSTALL_JSON" ]; then
+        ensure_existing_sku_matches || exit 1
+        echo "error: $BINARY_NAME already installed at $INSTALL_DIR" >&2
+        echo "       use --upgrade or --uninstall" >&2
         exit 1
       fi
-      if [ -f "$INSTALL_JSON" ]; then
-        echo "error: c1-vega-pl already installed at $INSTALL_DIR" >&2
-        echo "       use --upgrade or --uninstall" >&2
+      if [ -z "${C1_VEGA_LICENSE_KEY:-}" ]; then
+        echo "error: C1_VEGA_LICENSE_KEY env var required" >&2
+        echo "       run: curl -fsSL ... | C1_VEGA_LICENSE_KEY=<key> bash" >&2
         exit 1
       fi
       ;;
@@ -109,55 +123,99 @@ preflight() {
         echo "error: not installed (no $INSTALL_JSON); use default mode to install" >&2
         exit 1
       fi
+      ensure_existing_sku_matches || exit 1
       ;;
     uninstall)
       if [ ! -f "$INSTALL_JSON" ]; then
         echo "nothing to uninstall (no $INSTALL_JSON)"
         exit 0
       fi
+      ensure_existing_sku_matches || exit 1
       ;;
   esac
 }
 
 # --- platform detection -------------------------------------------------------
 
-detect_arch() {
-  local m
-  m="$(uname -m)"
-  case "$m" in
-    arm64)   echo "aarch64-apple-darwin" ;;
-    x86_64)  echo "x86_64-apple-darwin" ;;
-    *)       echo "unsupported arch: $m" >&2; return 1 ;;
+detect_os() {
+  uname -s
+}
+
+detect_platform() {
+  local os arch
+  os="$(uname -s)"
+  arch="$(uname -m)"
+
+  case "$os:$arch" in
+    Darwin:arm64)    echo "aarch64-apple-darwin" ;;
+    Darwin:x86_64)   echo "x86_64-apple-darwin" ;;
+    Linux:x86_64)    echo "x86_64-unknown-linux-gnu" ;;
+    Linux:aarch64)   echo "aarch64-unknown-linux-gnu" ;;
+    Linux:arm64)     echo "aarch64-unknown-linux-gnu" ;;
+    Darwin:*)        echo "unsupported arch for macOS: $arch" >&2; return 1 ;;
+    Linux:*)         echo "unsupported arch for Linux: $arch" >&2; return 1 ;;
+    *)               echo "unsupported OS: $os" >&2; return 1 ;;
   esac
 }
 
 # --- release resolution -------------------------------------------------------
 
+is_stable_tag() {
+  local tag="$1" version
+  case "$tag" in
+    "$SKU_ID"-v*) ;;
+    *) return 1 ;;
+  esac
+  version="$(version_from_tag "$tag")"
+  case "$version" in
+    *-*) return 1 ;;
+  esac
+  echo "$version" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+$'
+}
+
+sort_semver_tags() {
+  while IFS= read -r tag; do
+    [ -n "$tag" ] || continue
+    is_stable_tag "$tag" || continue
+    local version major minor patch
+    version="$(version_from_tag "$tag")"
+    major="${version%%.*}"
+    version="${version#*.}"
+    minor="${version%%.*}"
+    patch="${version#*.}"
+    printf '%010d.%010d.%010d %s\n' "$major" "$minor" "$patch" "$tag"
+  done | sort | awk '{print $2}'
+}
+
 resolve_release_tag() {
   if [ -n "${PIN_VERSION:-}" ]; then
+    if ! is_stable_tag "$PIN_VERSION"; then
+      echo "error: pinned release $PIN_VERSION does not match $SKU_ID stable release tags" >&2
+      return 1
+    fi
     echo "$PIN_VERSION"
     return 0
   fi
 
-  local api="https://api.github.com/repos/$REPO/releases/latest"
-  local resp
+  local api="https://api.github.com/repos/$REPO/releases?per_page=100"
+  local resp tags tag
   resp="$(curl -fsSL --max-time 30 "$api")" || return 1
   if [ -z "$resp" ]; then
     return 1
   fi
 
   if command -v jq >/dev/null 2>&1; then
-    local tag
-    tag="$(echo "$resp" | jq -r '.tag_name // empty')"
-    if [ -n "$tag" ] && [ "$tag" != "null" ]; then
+    tags="$(echo "$resp" | jq -r --arg prefix "$SKU_ID-v" '.[] | select((.tag_name | startswith($prefix)) and (.prerelease | not)) | .tag_name' 2>/dev/null || true)"
+    tag="$(echo "$tags" | sort_semver_tags | tail -1)"
+    if [ -n "$tag" ]; then
       echo "$tag"
       return 0
     fi
   fi
 
-  # Fallback: extract "tag_name": "v..." with grep/sed (works on bash 3.2 macOS).
-  local tag
-  tag="$(echo "$resp" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)"
+  tags="$(echo "$resp" | tr '\n' ' ' | sed 's/},[[:space:]]*{/}\
+{/g' | grep '"prerelease"[[:space:]]*:[[:space:]]*false' | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"'"$SKU_ID"'-v[0-9][0-9.]*"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
+  tag="$(echo "$tags" | sort_semver_tags | tail -1)"
   if [ -n "$tag" ]; then
     echo "$tag"
     return 0
@@ -168,11 +226,17 @@ resolve_release_tag() {
 
 # --- download + verify --------------------------------------------------------
 
+version_from_tag() {
+  local tag="$1"
+  echo "${tag#"$SKU_ID"-v}"
+}
+
 # Args: <tag> <triple> <work_dir>
 download_artifacts() {
   local tag="$1" triple="$2" work="$3"
-  local version="${tag#v}"
-  local archive="c1-vega-pl-${version}-${triple}.tar.gz"
+  local version
+  version="$(version_from_tag "$tag")"
+  local archive="${BINARY_NAME}-${version}-${triple}.tar.gz"
   local base="https://github.com/$REPO/releases/download/$tag"
 
   curl -fsSL --proto '=https' --tlsv1.2 --max-time 120 \
@@ -196,17 +260,17 @@ extract_binary() {
   work="$(mktemp -d -t c1vega-extract-XXXXXX)"
   tar -xzf "$archive" -C "$work"
 
-  # The Plan D2 package.sh wraps the binary in c1-vega-pl-<v>-<triple>/. Find it
+  # The Plan D2 package.sh wraps the binary in $BINARY_NAME-<v>-<triple>/. Find it
   # robustly: look for the named binary anywhere under work.
   local found
-  found="$(find "$work" -type f -name 'c1-vega-pl' -perm +111 2>/dev/null | head -1)"
+  found="$(find "$work" -type f -name "$BINARY_NAME" -perm +111 2>/dev/null | head -1)"
   if [ -z "$found" ]; then
-    # Fallback: any file named c1-vega-pl (perm bit may be lost on Linux runners
+    # Fallback: any file named $BINARY_NAME (perm bit may be lost on Linux runners
     # or when -perm +111 is unsupported by find).
-    found="$(find "$work" -type f -name 'c1-vega-pl' | head -1)"
+    found="$(find "$work" -type f -name "$BINARY_NAME" | head -1)"
   fi
   if [ -z "$found" ]; then
-    echo "error: c1-vega-pl not found in archive $archive" >&2
+    echo "error: $BINARY_NAME not found in archive $archive" >&2
     rm -rf "$work"
     return 1
   fi
@@ -217,7 +281,7 @@ extract_binary() {
   rm -rf "$work"
 
   # Strip Gatekeeper quarantine so first run isn't blocked. Unsigned binary
-  # trust model: user already accepted curl|sh trust by pasting the command.
+  # trust model: user already accepted remote installer execution by pasting the command.
   xattr -d com.apple.quarantine "$BIN_PATH" 2>/dev/null || true
 }
 
@@ -236,9 +300,9 @@ license_key_hash() {
   echo "sha256:$hex"
 }
 
-# Args: <version> <tag> <triple> <license_key> <shell_files_json> <binary_sha256>
+# Args: <version> <tag> <triple> <license_key> <shell_files_json> <binary_sha256> <service_manager>
 write_install_json() {
-  local version="$1" tag="$2" triple="$3" key="$4" shell_files="$5" bin_sha="$6"
+  local version="$1" tag="$2" triple="$3" key="$4" shell_files="$5" bin_sha="$6" service_manager="${7:-launchd}"
   local key_hash
   key_hash="$(license_key_hash "$key")"
   local now
@@ -247,12 +311,15 @@ write_install_json() {
   mkdir -p "$INSTALL_DIR/var"
   cat > "$INSTALL_JSON" <<EOF
 {
+  "sku": "$SKU_ID",
+  "binary": "$BINARY_NAME",
   "version": "$version",
   "tag": "$tag",
   "arch": "$triple",
   "installed_at": "$now",
   "license_key_hash": "$key_hash",
   "binary_sha256": "$bin_sha",
+  "service_manager": "$service_manager",
   "shell_files_patched": $shell_files,
   "launchd_label": "$PLIST_LABEL"
 }
@@ -272,6 +339,18 @@ read_install_json() {
   fi
   grep -o "\"$field\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$INSTALL_JSON" \
     | sed -E "s/.*\"$field\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/"
+}
+
+ensure_existing_sku_matches() {
+  if [ ! -f "$INSTALL_JSON" ]; then
+    return 0
+  fi
+  local existing
+  existing="$(read_install_json sku)"
+  if [ -n "$existing" ] && [ "$existing" != "$SKU_ID" ]; then
+    echo "error: installed sku $existing does not match $SKU_ID" >&2
+    return 1
+  fi
 }
 
 # --- shell rc patch -----------------------------------------------------------
@@ -294,13 +373,13 @@ patch_shell_rc() {
   cp "$rc" "$backup"
 
   local block
-  block="$(cat "$REPO_ROOT_GUESS/scripts/install/zshrc-block.sh" 2>/dev/null)"
-  if [ -z "$block" ]; then
-    block="$RC_BLOCK_BEGIN
+  block="$RC_BLOCK_BEGIN
 export PATH=\"\$HOME/.c1-vega/bin:\$PATH\"
 export ANTHROPIC_BASE_URL=\"http://127.0.0.1:8787\"
+codex() {
+  $BINARY_NAME run --client codex --codex-auth chatgpt -- codex \"\$@\"
+}
 $RC_BLOCK_END"
-  fi
 
   local tmp
   tmp="$(mktemp -t c1vega-rc-XXXXXX)"
@@ -379,12 +458,50 @@ EOF
 }
 
 load_launchd() {
-  launchctl bootstrap "gui/$UID" "$PLIST_PATH"
-  launchctl kickstart "gui/$UID/$PLIST_LABEL"
+  launchctl bootstrap "gui/$UID" "$PLIST_PATH" || return 1
+  launchctl kickstart "gui/$UID/$PLIST_LABEL" || return 1
 }
 
 unload_launchd() {
   launchctl bootout "gui/$UID" "$PLIST_PATH" 2>/dev/null || true
+}
+
+# --- systemd user -------------------------------------------------------------
+
+render_systemd_unit() {
+  mkdir -p "$SYSTEMD_USER_DIR"
+  cat > "$SYSTEMD_UNIT_PATH" <<EOF
+[Unit]
+Description=Copernicus One Vega ($BINARY_NAME)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$BIN_PATH start
+Restart=on-failure
+RestartSec=2
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target
+EOF
+  chmod 644 "$SYSTEMD_UNIT_PATH"
+}
+
+load_systemd_user() {
+  command -v systemctl >/dev/null 2>&1 || return 1
+  systemctl --user daemon-reload || return 1
+  systemctl --user enable --now "$SERVICE_BASENAME.service" || return 1
+}
+
+unload_systemd_user() {
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user disable --now "$SERVICE_BASENAME.service" 2>/dev/null || true
+  fi
+  rm -f "$SYSTEMD_UNIT_PATH"
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user daemon-reload 2>/dev/null || true
+  fi
 }
 
 smoke_test() {
@@ -398,6 +515,41 @@ smoke_test() {
   return 1
 }
 
+start_service_for_os() {
+  local os="$1"
+  case "$os" in
+    Darwin)
+      render_plist || return 1
+      if ! load_launchd >/dev/null; then
+        unload_launchd >/dev/null || true
+        rm -f "$PLIST_PATH"
+        return 1
+      fi
+      if smoke_test; then
+        echo "launchd"
+        return 0
+      fi
+      unload_launchd >/dev/null
+      rm -f "$PLIST_PATH"
+      return 1
+      ;;
+    Linux)
+      render_systemd_unit || return 1
+      if load_systemd_user >/dev/null && smoke_test; then
+        echo "systemd-user"
+        return 0
+      fi
+      unload_systemd_user >/dev/null
+      echo "manual"
+      return 0
+      ;;
+    *)
+      echo "manual"
+      return 0
+      ;;
+  esac
+}
+
 # --- main ---------------------------------------------------------------------
 
 main() {
@@ -406,7 +558,7 @@ main() {
   if [ "$DRY_RUN" -eq 1 ]; then
     case "$MODE" in
       install)
-        echo "[DRY-RUN] would: detect arch, resolve latest release, download tarball + SHA256SUMS, verify checksum, extract to $INSTALL_DIR/bin/, run \`c1-vega-pl activate\`, write $INSTALL_JSON, patch $HOME/.zshrc, render+load $PLIST_PATH, smoke-test ${PROXY_HEALTH_URL}"
+        echo "[DRY-RUN] would: detect platform, resolve latest release, download tarball + SHA256SUMS, verify checksum, extract to $INSTALL_DIR/bin/, run \`$BINARY_NAME activate\`, write $INSTALL_JSON, patch $HOME/.zshrc, render+load $PLIST_PATH, smoke-test ${PROXY_HEALTH_URL}"
         ;;
       upgrade)
         echo "[DRY-RUN] would: download new release, replace $BIN_PATH, kickstart launchd"
@@ -439,16 +591,23 @@ run_activate() {
 }
 
 install() {
-  local triple tag version archive work bin_sha shell_files
+  local triple tag version archive work bin_sha shell_files os service_manager
 
-  triple="$(detect_arch)"
+  if [ -f "$INSTALL_JSON" ]; then
+    ensure_existing_sku_matches || return 1
+    echo "error: $BINARY_NAME already installed at $INSTALL_DIR" >&2
+    echo "       use --upgrade or --uninstall" >&2
+    return 1
+  fi
+
+  triple="$(detect_platform)"
   tag="$(resolve_release_tag)"
-  version="${tag#v}"
+  version="$(version_from_tag "$tag")"
 
   work="$(mktemp -d -t c1vega-install-XXXXXX)"
-  trap 'rm -rf "$work"' EXIT
+  trap 'rm -rf "${work:-}"' EXIT
 
-  archive="c1-vega-pl-${version}-${triple}.tar.gz"
+  archive="${BINARY_NAME}-${version}-${triple}.tar.gz"
   download_artifacts "$tag" "$triple" "$work"
   verify_checksum "$work" "$archive"
 
@@ -462,7 +621,7 @@ install() {
   fi
 
   shell_files='[]'
-  write_install_json "$version" "$tag" "$triple" "$C1_VEGA_LICENSE_KEY" "$shell_files" "$bin_sha"
+  write_install_json "$version" "$tag" "$triple" "$C1_VEGA_LICENSE_KEY" "$shell_files" "$bin_sha" "manual"
 
   local patched=()
   local rc
@@ -477,14 +636,8 @@ install() {
     patched_json+="$(IFS=,; echo "${patched[*]}")"
   fi
   patched_json+="]"
-  write_install_json "$version" "$tag" "$triple" "$C1_VEGA_LICENSE_KEY" "$patched_json" "$bin_sha"
-
-  render_plist
-  load_launchd
-
-  if ! smoke_test; then
-    unload_launchd
-    rm -f "$PLIST_PATH"
+  os="$(detect_os)"
+  if ! service_manager="$(start_service_for_os "$os")"; then
     echo "error: proxy did not become healthy within 10 s" >&2
     if [ -f "$LOG_PATH" ]; then
       echo "--- last 50 log lines ---" >&2
@@ -492,14 +645,29 @@ install() {
     fi
     return 1
   fi
+  write_install_json "$version" "$tag" "$triple" "$C1_VEGA_LICENSE_KEY" "$patched_json" "$bin_sha" "$service_manager"
 
-  print_success_message "$version"
+  print_success_message "$version" "$service_manager"
 }
 
 print_success_message() {
-  local version="$1"
+  local version="$1" service_manager="${2:-launchd}"
+  if [ "$service_manager" = "manual" ]; then
+    cat <<EOF
+✓ $BINARY_NAME v$version installed.
+
+Vega installed. Start manually with: $BINARY_NAME start
+
+Open a new terminal and run \`claude\` — Claude Code will route through the
+proxy automatically after you start Vega.
+
+Tip: \`history -d \$(history 1)\` removes this command (with your license key)
+from shell history.
+EOF
+    return 0
+  fi
   cat <<EOF
-✓ c1-vega-pl v$version installed and running on http://127.0.0.1:8787
+✓ $BINARY_NAME v$version installed and running on http://127.0.0.1:8787
 
 Open a new terminal and run \`claude\` — Claude Code will route through the
 proxy automatically.
@@ -514,18 +682,27 @@ EOF
 # Internal helper for upgrade(): writes install.json with a pre-computed
 # license_key_hash (skip re-hashing).
 write_install_json_raw() {
-  local version="$1" tag="$2" triple="$3" key_hash="$4" shell_files="$5" bin_sha="$6"
+  local version="$1" tag="$2" triple="$3" key_hash="$4" shell_files="$5" bin_sha="$6" service_manager="${7:-}"
   local now
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [ -z "$service_manager" ]; then
+    service_manager="$(read_install_json service_manager 2>/dev/null || true)"
+  fi
+  if [ -z "$service_manager" ]; then
+    service_manager="launchd"
+  fi
   mkdir -p "$INSTALL_DIR/var"
   cat > "$INSTALL_JSON" <<EOF
 {
+  "sku": "$SKU_ID",
+  "binary": "$BINARY_NAME",
   "version": "$version",
   "tag": "$tag",
   "arch": "$triple",
   "installed_at": "$now",
   "license_key_hash": "$key_hash",
   "binary_sha256": "$bin_sha",
+  "service_manager": "$service_manager",
   "shell_files_patched": $shell_files,
   "launchd_label": "$PLIST_LABEL"
 }
@@ -537,17 +714,18 @@ upgrade() {
     echo "error: not installed" >&2
     return 1
   fi
+  ensure_existing_sku_matches || return 1
 
-  local triple tag version archive work bin_sha old_hash new_hash
+  local triple tag version archive work bin_sha old_hash new_hash os service_manager
 
-  triple="$(detect_arch)"
+  triple="$(detect_platform)"
   tag="$(resolve_release_tag)"
-  version="${tag#v}"
+  version="$(version_from_tag "$tag")"
 
   work="$(mktemp -d -t c1vega-upgrade-XXXXXX)"
-  trap 'rm -rf "$work"' EXIT
+  trap 'rm -rf "${work:-}"' EXIT
 
-  archive="c1-vega-pl-${version}-${triple}.tar.gz"
+  archive="${BINARY_NAME}-${version}-${triple}.tar.gz"
   download_artifacts "$tag" "$triple" "$work"
   verify_checksum "$work" "$archive"
   extract_binary "$work/$archive"
@@ -571,23 +749,21 @@ upgrade() {
     patched_json='[]'
   fi
   local key_for_hash="${C1_VEGA_LICENSE_KEY:-__keep_old__}"
-  if [ "$key_for_hash" = "__keep_old__" ]; then
-    local existing_hash
-    existing_hash="$(read_install_json license_key_hash)"
-    write_install_json_raw "$version" "$tag" "$triple" "$existing_hash" "$patched_json" "$bin_sha"
-  else
-    write_install_json "$version" "$tag" "$triple" "$C1_VEGA_LICENSE_KEY" "$patched_json" "$bin_sha"
-  fi
-
-  render_plist
-  launchctl kickstart -k "gui/$UID/$PLIST_LABEL" 2>/dev/null || load_launchd
-
-  if ! smoke_test; then
+  os="$(detect_os)"
+  if ! service_manager="$(start_service_for_os "$os")"; then
     echo "error: proxy not healthy after upgrade" >&2
     return 1
   fi
 
-  echo "✓ Upgraded c1-vega-pl to v$version."
+  if [ "$key_for_hash" = "__keep_old__" ]; then
+    local existing_hash
+    existing_hash="$(read_install_json license_key_hash)"
+    write_install_json_raw "$version" "$tag" "$triple" "$existing_hash" "$patched_json" "$bin_sha" "$service_manager"
+  else
+    write_install_json "$version" "$tag" "$triple" "$C1_VEGA_LICENSE_KEY" "$patched_json" "$bin_sha" "$service_manager"
+  fi
+
+  echo "✓ Upgraded $BINARY_NAME to v$version."
 }
 
 # --- uninstall flow -----------------------------------------------------------
@@ -597,9 +773,22 @@ uninstall() {
     echo "nothing to uninstall"
     return 0
   fi
+  ensure_existing_sku_matches || return 1
 
-  unload_launchd
-  rm -f "$PLIST_PATH"
+  local service_manager
+  service_manager="$(read_install_json service_manager 2>/dev/null || true)"
+  case "$service_manager" in
+    launchd)
+      unload_launchd
+      rm -f "$PLIST_PATH"
+      ;;
+    systemd-user)
+      unload_systemd_user
+      ;;
+    manual|"")
+      rm -f "$PLIST_PATH" "$SYSTEMD_UNIT_PATH"
+      ;;
+  esac
 
   local shell_files
   if command -v jq >/dev/null 2>&1; then
@@ -617,7 +806,7 @@ uninstall() {
   rm -rf "$INSTALL_DIR"
 
   cat <<EOF
-✓ Removed binary, launchd unit, and shell-rc patches.
+✓ Removed binary, service unit, and shell-rc patches.
 
 Note: Vault at ~/Library/Application Support/c1-vega/ left intact.
 \`rm -rf\` it manually for a clean slate.
