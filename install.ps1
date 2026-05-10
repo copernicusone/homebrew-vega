@@ -242,12 +242,18 @@ function Remove-BinFromPath {
     Write-Step "Removed $BinDir from user PATH."
 }
 
-# --- claude.cmd wrapper -------------------------------------------------------
+# --- claude/codex wrappers ----------------------------------------------------
 
 function Install-ClaudeWrapper {
     $cmd = Join-Path $BinDir "claude.cmd"
-    Set-Content -Path $cmd -Value '@c1-vega-plen.exe run -- claude %*' -Encoding ASCII
+    Set-Content -Path $cmd -Value '@c1-vega-plen.exe run --client anthropic -- claude %*' -Encoding ASCII
     Write-Step "Created claude.cmd wrapper."
+}
+
+function Install-CodexWrapper {
+    $cmd = Join-Path $BinDir "codex.cmd"
+    Set-Content -Path $cmd -Value '@c1-vega-plen.exe run --client codex --codex-auth chatgpt -- codex %*' -Encoding ASCII
+    Write-Step "Created codex.cmd wrapper."
 }
 
 # --- claude code slash commands -----------------------------------------------
@@ -313,15 +319,18 @@ function Invoke-Install {
 
         Add-BinToPath
         Install-ClaudeWrapper
+        Install-CodexWrapper
         Install-ClaudeCommands
 
         Write-Ok "c1-vega-plen v$ver installed."
         Write-Host @"
+Open a new terminal and run ``claude`` or ``codex`` -- the c1-vega proxy starts
+on demand and routes AI client traffic through it.
 
-Open a new terminal and run ``claude`` -- the c1-vega proxy starts on demand,
-prints a privacy banner, and routes Claude Code through it.
+The ``codex`` wrapper uses ChatGPT auth by default. API-key mode remains
+available via ``c1-vega-plen.exe run --client codex --codex-auth api -- codex``.
 
-Inside Claude Code, /c1-vega-help lists the in-chat directives.
+Inside [PERSON_3] Code, /c1-vega-help lists the in-chat directives.
 "@
     }
     finally {
@@ -359,6 +368,7 @@ function Invoke-Upgrade {
         Write-InstallJson -Ver $ver -Tag $tag -Arch $triple -KeyHash $keyHash -BinarySha256 $binSha
 
         Install-ClaudeWrapper
+        Install-CodexWrapper
         Install-ClaudeCommands
 
         Write-Ok "Upgraded c1-vega-plen to v$ver."
@@ -377,7 +387,7 @@ function Invoke-Uninstall {
     Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
     Write-Step "Removed $InstallDir"
 
-    Write-Ok "Removed binary, PATH entry, Claude Code slash commands, and config."
+    Write-Ok "Removed binary, PATH entry, claude/codex wrappers, Claude Code slash commands, and config."
     Write-Host @"
 
 Note: If c1-vega stored any data in %LOCALAPPDATA%\c1-vega, it was left
@@ -392,13 +402,13 @@ if ($canContinue -eq $false) { return }
 
 if ($DryRun) {
     if ($Uninstall) {
-        Write-Host "[DRY-RUN] would: remove Claude Code slash commands, remove $BinDir from PATH, rm -rf $InstallDir"
+        Write-Host "[DRY-RUN] would: remove Claude Code slash commands, remove $BinDir from PATH, rm -rf $InstallDir including claude/codex wrappers"
     }
     elseif ($Upgrade) {
-        Write-Host "[DRY-RUN] would: download new release, replace $BinPath, refresh slash commands"
+        Write-Host "[DRY-RUN] would: download new release, replace $BinPath, refresh claude/codex wrappers and slash commands"
     }
     else {
-        Write-Host "[DRY-RUN] would: detect arch, resolve latest release, download tarball + SHA256SUMS, verify checksum, extract to $BinDir, run activate, write $InstallJson, add $BinDir to PATH, create claude.cmd wrapper, install Claude Code slash commands"
+        Write-Host "[DRY-RUN] would: detect arch, resolve latest release, download tarball + SHA256SUMS, verify checksum, extract to $BinDir, run activate, write $InstallJson, add $BinDir to PATH, create claude.cmd and codex.cmd wrappers, install Claude Code slash commands"
     }
     return
 }
