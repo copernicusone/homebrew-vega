@@ -13,7 +13,8 @@
 /Formula/               @mkania-copernicus @pkupisie @kedob5
 
 # Release/install scripts: run on user machines with shell privileges
-/install.sh             @mkania-copernicus @pkupisie @kedob5
+/install-plen.sh       @mkania-copernicus @pkupisie @kedob5
+/install-en.sh         @mkania-copernicus @pkupisie @kedob5
 /install.ps1            @mkania-copernicus @pkupisie @kedob5
 /install/               @mkania-copernicus @pkupisie @kedob5
 
