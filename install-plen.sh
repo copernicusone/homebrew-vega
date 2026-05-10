@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# c1-vega-plen install script for macOS.
+# c1-vega-plen install script for macOS and Linux.
 # Usage:
-#   curl -fsSL <INSTALL_SCRIPT_URL> | C1_VEGA_LICENSE_KEY=<key> sh
+#   curl -fsSL <INSTALL_SCRIPT_URL> | C1_VEGA_LICENSE_KEY=<key> bash
 # Modes (mutually exclusive): default install, --upgrade, --uninstall.
 # Composable: --version <tag>, --dry-run.
 #
@@ -15,11 +15,14 @@ set -euo pipefail
 # --- constants ----------------------------------------------------------------
 
 readonly INSTALL_DIR="$HOME/.c1-vega"
-readonly BIN_PATH="$INSTALL_DIR/bin/c1-vega-plen"
+readonly SKU_ID="c1-vega-plen"
+readonly BINARY_NAME="c1-vega-plen"
+readonly INSTALL_SCRIPT_NAME="install-plen.sh"
+readonly BIN_PATH="$INSTALL_DIR/bin/$BINARY_NAME"
 readonly INSTALL_JSON="$INSTALL_DIR/var/install.json"
 readonly RC_BLOCK_BEGIN="# >>> c1-vega >>>"
 readonly RC_BLOCK_END="# <<< c1-vega <<<"
-# Source repo is private; binaries and install.sh are mirrored to the public
+# Source repo is private; binaries and per-sku installers are mirrored to the public
 # Homebrew tap (`copernicusone/homebrew-vega`). Override with C1_VEGA_REPO=
 # during dev to point at a private repo (only works with auth-bearing curl).
 readonly REPO="${C1_VEGA_REPO:-copernicusone/homebrew-vega}"
@@ -33,10 +36,10 @@ readonly REPO_ROOT_GUESS
 
 usage() {
   cat <<EOF
-c1-vega-plen install script for macOS.
+$BINARY_NAME install script for macOS and Linux.
 
 Usage:
-  curl -fsSL <INSTALL_SCRIPT_URL> | C1_VEGA_LICENSE_KEY=<key> sh
+  curl -fsSL https://raw.githubusercontent.com/copernicusone/homebrew-vega/main/$INSTALL_SCRIPT_NAME | C1_VEGA_LICENSE_KEY=<key> bash
 
 Modes (mutually exclusive):
   (default)        Full install: download, activate, configure shell wrappers.
@@ -44,7 +47,7 @@ Modes (mutually exclusive):
   --uninstall      Reverse install: shell rc reverted, files removed.
 
 Composable:
-  --version <tag>  Pin to specific tag instead of latest.
+  --version $SKU_ID-v0.1.0  Pin to a specific $SKU_ID release tag.
   --dry-run        Print actions without executing.
   --help           This message.
 EOF
@@ -72,29 +75,37 @@ parse_args() {
 # --- preflight ----------------------------------------------------------------
 
 preflight() {
-  if [ "$(uname -s)" != "Darwin" ]; then
-    echo "error: this script supports macOS only (detected $(uname -s))" >&2
-    exit 1
-  fi
-
-  local ver major
-  ver="$(sw_vers -productVersion)"
-  major="${ver%%.*}"
-  if [ "$major" -lt "$MIN_MACOS_MAJOR" ]; then
-    echo "error: macOS $MIN_MACOS_MAJOR (Monterey) or later required (have $ver)" >&2
-    exit 1
-  fi
+  local os
+  os="$(uname -s)"
+  case "$os" in
+    Darwin)
+      local ver major
+      ver="$(sw_vers -productVersion)"
+      major="${ver%%.*}"
+      if [ "$major" -lt "$MIN_MACOS_MAJOR" ]; then
+        echo "error: macOS $MIN_MACOS_MAJOR (Monterey) or later required (have $ver)" >&2
+        exit 1
+      fi
+      ;;
+    Linux)
+      ;;
+    *)
+      echo "error: unsupported OS: $os" >&2
+      exit 1
+      ;;
+  esac
 
   case "$MODE" in
     install)
-      if [ -z "${C1_VEGA_LICENSE_KEY:-}" ]; then
-        echo "error: C1_VEGA_LICENSE_KEY env var required" >&2
-        echo "       run: curl -fsSL ... | C1_VEGA_LICENSE_KEY=<key> sh" >&2
+      if [ -f "$INSTALL_JSON" ]; then
+        ensure_existing_sku_matches || exit 1
+        echo "error: $BINARY_NAME already installed at $INSTALL_DIR" >&2
+        echo "       use --upgrade or --uninstall" >&2
         exit 1
       fi
-      if [ -f "$INSTALL_JSON" ]; then
-        echo "error: c1-vega-plen already installed at $INSTALL_DIR" >&2
-        echo "       use --upgrade or --uninstall" >&2
+      if [ -z "${C1_VEGA_LICENSE_KEY:-}" ]; then
+        echo "error: C1_VEGA_LICENSE_KEY env var required" >&2
+        echo "       run: curl -fsSL ... | C1_VEGA_LICENSE_KEY=<key> bash" >&2
         exit 1
       fi
       ;;
@@ -103,12 +114,14 @@ preflight() {
         echo "error: not installed (no $INSTALL_JSON); use default mode to install" >&2
         exit 1
       fi
+      ensure_existing_sku_matches || exit 1
       ;;
     uninstall)
       if [ ! -f "$INSTALL_JSON" ]; then
         echo "nothing to uninstall (no $INSTALL_JSON)"
         exit 0
       fi
+      ensure_existing_sku_matches || exit 1
       ;;
   esac
 }
@@ -116,42 +129,85 @@ preflight() {
 # --- platform detection -------------------------------------------------------
 
 detect_arch() {
-  local m
-  m="$(uname -m)"
-  case "$m" in
-    arm64)   echo "aarch64-apple-darwin" ;;
-    x86_64)  echo "x86_64-apple-darwin" ;;
-    *)       echo "unsupported arch: $m" >&2; return 1 ;;
+  local os arch
+  os="$(uname -s)"
+  arch="$(uname -m)"
+
+  case "$os:$arch" in
+    Darwin:arm64)  echo "aarch64-apple-darwin" ;;
+    Darwin:x86_64) echo "x86_64-apple-darwin" ;;
+    Linux:x86_64)  echo "x86_64-unknown-linux-gnu" ;;
+    Linux:aarch64) echo "aarch64-unknown-linux-gnu" ;;
+    Linux:arm64)   echo "aarch64-unknown-linux-gnu" ;;
+    Darwin:*)      echo "unsupported arch for macOS: $arch" >&2; return 1 ;;
+    Linux:*)       echo "unsupported arch for Linux: $arch" >&2; return 1 ;;
+    *)             echo "unsupported OS: $os" >&2; return 1 ;;
   esac
 }
 
 # --- release resolution -------------------------------------------------------
 
+version_from_tag() {
+  local tag="$1"
+  echo "${tag#"$SKU_ID"-v}"
+}
+
+is_stable_tag() {
+  local tag="$1" version
+  case "$tag" in
+    "$SKU_ID"-v*) ;;
+    *) return 1 ;;
+  esac
+  version="$(version_from_tag "$tag")"
+  case "$version" in
+    *-*) return 1 ;;
+  esac
+  echo "$version" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+$'
+}
+
+sort_semver_tags() {
+  while IFS= read -r tag; do
+    [ -n "$tag" ] || continue
+    is_stable_tag "$tag" || continue
+    local version major minor patch
+    version="$(version_from_tag "$tag")"
+    major="${version%%.*}"
+    version="${version#*.}"
+    minor="${version%%.*}"
+    patch="${version#*.}"
+    printf '%010d.%010d.%010d %s\n' "$major" "$minor" "$patch" "$tag"
+  done | sort | awk '{print $2}'
+}
+
 resolve_release_tag() {
   if [ -n "${PIN_VERSION:-}" ]; then
+    if ! is_stable_tag "$PIN_VERSION"; then
+      echo "error: pinned release $PIN_VERSION does not match $SKU_ID stable release tags" >&2
+      return 1
+    fi
     echo "$PIN_VERSION"
     return 0
   fi
 
-  local api="https://api.github.com/repos/$REPO/releases/latest"
-  local resp
+  local api="https://api.github.com/repos/$REPO/releases?per_page=100"
+  local resp tags tag
   resp="$(curl -fsSL --max-time 30 "$api")" || return 1
   if [ -z "$resp" ]; then
     return 1
   fi
 
   if command -v jq >/dev/null 2>&1; then
-    local tag
-    tag="$(echo "$resp" | jq -r '.tag_name // empty')"
-    if [ -n "$tag" ] && [ "$tag" != "null" ]; then
+    tags="$(echo "$resp" | jq -r --arg prefix "$SKU_ID-v" '.[] | select((.tag_name | startswith($prefix)) and (.prerelease | not)) | .tag_name' 2>/dev/null || true)"
+    tag="$(echo "$tags" | sort_semver_tags | tail -1)"
+    if [ -n "$tag" ]; then
       echo "$tag"
       return 0
     fi
   fi
 
-  # Fallback: extract "tag_name": "v..." with grep/sed (works on bash 3.2 macOS).
-  local tag
-  tag="$(echo "$resp" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)"
+  tags="$(echo "$resp" | tr '\n' ' ' | sed 's/},[[:space:]]*{/}\
+{/g' | grep '"prerelease"[[:space:]]*:[[:space:]]*false' | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"'"$SKU_ID"'-v[0-9][0-9.]*"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
+  tag="$(echo "$tags" | sort_semver_tags | tail -1)"
   if [ -n "$tag" ]; then
     echo "$tag"
     return 0
@@ -165,8 +221,9 @@ resolve_release_tag() {
 # Args: <tag> <triple> <work_dir>
 download_artifacts() {
   local tag="$1" triple="$2" work="$3"
-  local version="${tag#v}"
-  local archive="c1-vega-plen-${version}-${triple}.tar.gz"
+  local version
+  version="$(version_from_tag "$tag")"
+  local archive="${BINARY_NAME}-${version}-${triple}.tar.gz"
   local base="https://github.com/$REPO/releases/download/$tag"
 
   curl -fsSL --proto '=https' --tlsv1.2 --max-time 120 \
@@ -190,17 +247,17 @@ extract_binary() {
   work="$(mktemp -d -t c1vega-extract-XXXXXX)"
   tar -xzf "$archive" -C "$work"
 
-  # The release package wraps the binary in c1-vega-plen-<v>-<triple>/. Find it
+  # The release package wraps the binary in $BINARY_NAME-<v>-<triple>/. Find it
   # robustly: look for the named binary anywhere under work.
   local found
-  found="$(find "$work" -type f -name 'c1-vega-plen' -perm +111 2>/dev/null | head -1)"
+  found="$(find "$work" -type f -name "$BINARY_NAME" -perm +111 2>/dev/null | head -1)"
   if [ -z "$found" ]; then
-    # Fallback: any file named c1-vega-plen (perm bit may be lost on Linux runners
+    # Fallback: any file named $BINARY_NAME (perm bit may be lost on Linux runners
     # or when -perm +111 is unsupported by find).
-    found="$(find "$work" -type f -name 'c1-vega-plen' | head -1)"
+    found="$(find "$work" -type f -name "$BINARY_NAME" | head -1)"
   fi
   if [ -z "$found" ]; then
-    echo "error: c1-vega-plen not found in archive $archive" >&2
+    echo "error: $BINARY_NAME not found in archive $archive" >&2
     rm -rf "$work"
     return 1
   fi
@@ -211,7 +268,7 @@ extract_binary() {
   rm -rf "$work"
 
   # Strip Gatekeeper quarantine so first run isn't blocked. Unsigned binary
-  # trust model: user already accepted curl|sh trust by pasting the command.
+  # trust model: user already accepted remote installer execution or curl piped to bash.
   xattr -d com.apple.quarantine "$BIN_PATH" 2>/dev/null || true
 }
 
@@ -241,6 +298,8 @@ write_install_json() {
   mkdir -p "$INSTALL_DIR/var"
   cat > "$INSTALL_JSON" <<EOF
 {
+  "sku": "$SKU_ID",
+  "binary": "$BINARY_NAME",
   "version": "$version",
   "tag": "$tag",
   "arch": "$triple",
@@ -267,6 +326,49 @@ read_install_json() {
     | sed -E "s/.*\"$field\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/"
 }
 
+infer_existing_sku() {
+  local existing binary tag
+  existing="$(read_install_json sku || true)"
+  if [ -n "$existing" ]; then
+    echo "$existing"
+    return 0
+  fi
+
+  binary="$(read_install_json binary || true)"
+  case "$binary" in
+    c1-vega-plen|c1-vega-en)
+      echo "$binary"
+      return 0
+      ;;
+  esac
+
+  tag="$(read_install_json tag || true)"
+  case "$tag" in
+    c1-vega-plen-v*)
+      echo "c1-vega-plen"
+      return 0
+      ;;
+    c1-vega-en-v*)
+      echo "c1-vega-en"
+      return 0
+      ;;
+  esac
+
+  echo "c1-vega-plen"
+}
+
+ensure_existing_sku_matches() {
+  if [ ! -f "$INSTALL_JSON" ]; then
+    return 0
+  fi
+  local existing
+  existing="$(infer_existing_sku)"
+  if [ "$existing" != "$SKU_ID" ]; then
+    echo "error: installed sku $existing does not match $SKU_ID" >&2
+    return 1
+  fi
+}
+
 # --- shell rc patch -----------------------------------------------------------
 
 # Args: <rc_path>
@@ -287,12 +389,10 @@ patch_shell_rc() {
   cp "$rc" "$backup"
 
   local block
-  block="$(cat "$REPO_ROOT_GUESS/scripts/install/zshrc-block.sh" 2>/dev/null)"
-  if [ -z "$block" ]; then
-    block="$RC_BLOCK_BEGIN
+  block="$RC_BLOCK_BEGIN
 export PATH=\"\$HOME/.c1-vega/bin:\$PATH\"
 _c1_vega_claude() {
-  c1-vega-plen run --client anthropic -- claude \"\$@\"
+  $BINARY_NAME run --client anthropic -- claude \"\$@\"
 }
 
 claude() {
@@ -300,14 +400,13 @@ claude() {
 }
 
 _c1_vega_codex() {
-  c1-vega-plen run --client codex --codex-auth chatgpt -- codex \"\$@\"
+  $BINARY_NAME run --client codex --codex-auth chatgpt -- codex \"\$@\"
 }
 
 codex() {
   _c1_vega_codex \"\$@\"
 }
 $RC_BLOCK_END"
-  fi
 
   local tmp
   tmp="$(mktemp -t c1vega-rc-XXXXXX)"
@@ -362,7 +461,7 @@ main() {
   if [ "$DRY_RUN" -eq 1 ]; then
     case "$MODE" in
       install)
-        echo "[DRY-RUN] would: detect arch, resolve latest release, download tarball + SHA256SUMS, verify checksum, extract to $INSTALL_DIR/bin/, run \`c1-vega-plen activate\`, write $INSTALL_JSON, patch $HOME/.zshrc, install shell wrappers"
+        echo "[DRY-RUN] would: detect arch, resolve latest $SKU_ID release, download tarball + SHA256SUMS, verify checksum, extract to $INSTALL_DIR/bin/, run \`$BINARY_NAME activate\`, write $INSTALL_JSON, patch $HOME/.zshrc, install shell wrappers"
         ;;
       upgrade)
         echo "[DRY-RUN] would: download new release, replace $BIN_PATH, refresh install metadata"
@@ -397,14 +496,21 @@ run_activate() {
 install() {
   local triple tag version archive work bin_sha shell_files
 
+  if [ -f "$INSTALL_JSON" ]; then
+    ensure_existing_sku_matches || return 1
+    echo "error: $BINARY_NAME already installed at $INSTALL_DIR" >&2
+    echo "       use --upgrade or --uninstall" >&2
+    return 1
+  fi
+
   triple="$(detect_arch)"
   tag="$(resolve_release_tag)"
-  version="${tag#v}"
+  version="$(version_from_tag "$tag")"
 
   work="$(mktemp -d -t c1vega-install-XXXXXX)"
-  trap 'rm -rf "$work"' EXIT
+  trap 'rm -rf "${work:-}"' EXIT
 
-  archive="c1-vega-plen-${version}-${triple}.tar.gz"
+  archive="${BINARY_NAME}-${version}-${triple}.tar.gz"
   download_artifacts "$tag" "$triple" "$work"
   verify_checksum "$work" "$archive"
 
@@ -441,14 +547,14 @@ install() {
 print_success_message() {
   local version="$1"
   cat <<EOF
-✓ c1-vega-plen v$version installed.
+✓ $BINARY_NAME v$version installed.
 
 Open a new terminal and run \`claude\` or \`codex\` — the shell wrappers start
 the proxy on demand.
 
 The \`codex\` wrapper uses ChatGPT auth by default. If you alias \`claude\` or
 \`codex\` to an absolute path, point the alias at \`_c1_vega_claude\` or
-\`_c1_vega_codex\` instead, or call \`c1-vega-plen run\` directly.
+\`_c1_vega_codex\` instead, or call \`$BINARY_NAME run\` directly.
 
 Tip: \`history -d \$(history 1)\` removes this command (with your license key)
 from shell history.
@@ -466,6 +572,8 @@ write_install_json_raw() {
   mkdir -p "$INSTALL_DIR/var"
   cat > "$INSTALL_JSON" <<EOF
 {
+  "sku": "$SKU_ID",
+  "binary": "$BINARY_NAME",
   "version": "$version",
   "tag": "$tag",
   "arch": "$triple",
@@ -482,17 +590,18 @@ upgrade() {
     echo "error: not installed" >&2
     return 1
   fi
+  ensure_existing_sku_matches || return 1
 
   local triple tag version archive work bin_sha old_hash new_hash
 
   triple="$(detect_arch)"
   tag="$(resolve_release_tag)"
-  version="${tag#v}"
+  version="$(version_from_tag "$tag")"
 
   work="$(mktemp -d -t c1vega-upgrade-XXXXXX)"
-  trap 'rm -rf "$work"' EXIT
+  trap 'rm -rf "${work:-}"' EXIT
 
-  archive="c1-vega-plen-${version}-${triple}.tar.gz"
+  archive="${BINARY_NAME}-${version}-${triple}.tar.gz"
   download_artifacts "$tag" "$triple" "$work"
   verify_checksum "$work" "$archive"
   extract_binary "$work/$archive"
@@ -524,7 +633,7 @@ upgrade() {
     write_install_json "$version" "$tag" "$triple" "$C1_VEGA_LICENSE_KEY" "$patched_json" "$bin_sha"
   fi
 
-  echo "✓ Upgraded c1-vega-plen to v$version."
+  echo "✓ Upgraded $BINARY_NAME to v$version."
 }
 
 # --- uninstall flow -----------------------------------------------------------
@@ -534,6 +643,7 @@ uninstall() {
     echo "nothing to uninstall"
     return 0
   fi
+  ensure_existing_sku_matches || return 1
 
   local shell_files
   if command -v jq >/dev/null 2>&1; then
