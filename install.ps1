@@ -242,11 +242,11 @@ function Remove-BinFromPath {
     Write-Step "Removed $BinDir from user PATH."
 }
 
-# --- claude.cmd wrapper -------------------------------------------------------
+# --- claude/codex wrappers ----------------------------------------------------
 
 function Install-ClaudeWrapper {
     $cmd = Join-Path $BinDir "claude.cmd"
-    Set-Content -Path $cmd -Value '@c1-vega-plen.exe run -- claude %*' -Encoding ASCII
+    Set-Content -Path $cmd -Value '@c1-vega-plen.exe run --client anthropic -- claude %*' -Encoding ASCII
     Write-Step "Created claude.cmd wrapper."
 }
 
@@ -324,14 +324,13 @@ function Invoke-Install {
 
         Write-Ok "c1-vega-plen v$ver installed."
         Write-Host @"
-
 Open a new terminal and run ``claude`` or ``codex`` -- the c1-vega proxy starts
-on demand, prints a privacy banner, and routes AI client traffic through it.
+on demand and routes AI client traffic through it.
 
 The ``codex`` wrapper uses ChatGPT auth by default. API-key mode remains
 available via ``c1-vega-plen.exe run --client codex --codex-auth api -- codex``.
 
-Inside Claude Code, /c1-vega-help lists the in-chat directives.
+Inside [PERSON_3] Code, /c1-vega-help lists the in-chat directives.
 "@
     }
     finally {
