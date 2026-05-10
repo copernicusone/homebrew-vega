@@ -1,3 +1,6 @@
+# frozen_string_literal: true
+
+# Formula for c1-vega-en.
 class C1VegaEn < Formula
   desc "Local PII-anonymizing proxy for Claude Code (EN)"
   homepage "https://copernicusone.com/vega"
@@ -40,10 +43,9 @@ class C1VegaEn < Formula
   end
 
   test do
-    subcommand = "install" + "-shell"
     assert_match "c1-vega", shell_output("#{bin}/c1-vega-en --version")
     shell_output("#{bin}/c1-vega-en --help")
     shell_output("#{bin}/c1-vega-en license status")
-    shell_output("#{bin}/c1-vega-en #{subcommand} --dry-run")
+    shell_output("#{bin}/c1-vega-en install-shell --dry-run")
   end
 end

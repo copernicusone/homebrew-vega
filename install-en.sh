@@ -48,7 +48,7 @@ usage() {
 $BINARY_NAME install script for macOS and Linux.
 
 Usage:
-  curl -fsSL https://raw.githubusercontent.com/copernicusone/c1-vega/main/$INSTALL_SCRIPT_NAME | C1_VEGA_LICENSE_KEY=ck_live_example bash
+  curl -fsSL https://raw.githubusercontent.com/copernicusone/homebrew-vega/main/$INSTALL_SCRIPT_NAME | C1_VEGA_LICENSE_KEY=ck_live_example bash
 
 Modes (mutually exclusive):
   (default)        Full install: download, activate, configure shell, start service when supported.

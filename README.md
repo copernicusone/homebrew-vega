@@ -18,7 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/copernicusone/homebrew-vega/main/in
   | C1_VEGA_LICENSE_KEY=<your-key> bash
 ```
 
-### English-only (macOS / Linux)
+### English-only (macOS currently)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/copernicusone/homebrew-vega/main/install-en.sh \
@@ -32,13 +32,13 @@ $env:C1_VEGA_LICENSE_KEY="<your-key>"
 irm https://raw.githubusercontent.com/copernicusone/homebrew-vega/main/install.ps1 | iex
 ```
 
-## Alternative: Homebrew (macOS & Linux)
+## Alternative: Homebrew
 
-Homebrew installation supports both macOS and Linux.
+Homebrew installation supports PLEN on macOS and Linux. EN is macOS-only until the `c1-vega-en-v0.1.4` release publishes Linux assets.
 
 ```bash
 brew tap copernicusone/vega
 brew install c1-vega-plen   # bilingual PL+EN (recommended)
 # or
-brew install c1-vega-en     # English only
+brew install c1-vega-en     # English only (macOS currently)
 ```
