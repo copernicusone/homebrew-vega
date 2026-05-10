@@ -11,18 +11,28 @@ Homebrew tap for [Copernicus One Vega](https://copernicusone.pl) — a local PII
 
 ## Quick Install
 
-### PLEN (recommended, macOS / Linux)
+### macOS / Linux (Homebrew)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/copernicusone/homebrew-vega/main/install-plen.sh \
-  | C1_VEGA_LICENSE_KEY=<your-key> bash
+brew tap copernicusone/vega && brew install c1-vega-plen
+c1-vega-plen activate <your-license-key>
+c1-vega-plen install-shell
+brew services start c1-vega-plen
 ```
 
-### English-only (macOS / Linux)
+Upgrade an existing installation:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/copernicusone/homebrew-vega/main/install-en.sh \
-  | C1_VEGA_LICENSE_KEY=<your-key> bash
+brew update && brew upgrade c1-vega-plen && brew services restart c1-vega-plen
+```
+
+For the English-only SKU, use the same commands with `c1-vega-en`:
+
+```bash
+brew tap copernicusone/vega && brew install c1-vega-en
+c1-vega-en activate <your-license-key>
+c1-vega-en install-shell
+brew services start c1-vega-en
 ```
 
 After installation, open a new terminal and run `claude` or `codex`. The
@@ -45,12 +55,3 @@ irm https://raw.githubusercontent.com/copernicusone/homebrew-vega/main/install.p
 
 The PowerShell installer creates `claude.cmd` and `codex.cmd` wrappers in
 `~\.c1-vega\bin`.
-
-## Alternative: Homebrew (macOS / Linux)
-
-```bash
-brew tap copernicusone/vega
-brew install c1-vega-plen   # bilingual PL+EN (recommended)
-# or
-brew install c1-vega-en     # English only
-```
