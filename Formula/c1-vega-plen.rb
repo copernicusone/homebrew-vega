@@ -5,23 +5,23 @@ class C1VegaPlen < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-plen-v0.2.10/c1-vega-plen-0.2.10-aarch64-apple-darwin.tar.gz"
-      sha256 "8560475ecc404fd49ad8d6358f4f46c3e41200e0d788debc4e37c2522b1f5c9d"
+      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-plen-v0.2.11/c1-vega-plen-0.2.11-aarch64-apple-darwin.tar.gz"
+      sha256 "4575abc55aab55c13ff1f64c120c59de36f6fc405ed53b50c7eb3ac0dca211f3"
     end
     on_intel do
-      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-plen-v0.2.10/c1-vega-plen-0.2.10-x86_64-apple-darwin.tar.gz"
-      sha256 "3c3c8246e271b1b9098e7742f86ee680bf10401a7d750831f2aa1934003c8a88"
+      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-plen-v0.2.11/c1-vega-plen-0.2.11-x86_64-apple-darwin.tar.gz"
+      sha256 "92decb503e6ed993364a8e07f59c10ef89ae5cd91989e63a6e0e8716cc34fdde"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-plen-v0.2.10/c1-vega-plen-0.2.10-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "558afbbba06d08372d1eb0827c0a5247d0f23b5b5083b1952077ad95dd4224a1"
+      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-plen-v0.2.11/c1-vega-plen-0.2.11-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "9bc3d7d30c3d48a479f71873d70ef044dd2c1a287f481ed7a9ae732cd6f62f4d"
     end
     on_intel do
-      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-plen-v0.2.10/c1-vega-plen-0.2.10-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "48ab4b1c98706a7042dabd21fcb47ee1700752802407c611f41751867137460a"
+      url "https://github.com/copernicusone/homebrew-vega/releases/download/c1-vega-plen-v0.2.11/c1-vega-plen-0.2.11-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "8533dbc107e7911915c4e51cbc53a4a7c11d2fad2373dabda647ea6a016304cf"
     end
   end
 
