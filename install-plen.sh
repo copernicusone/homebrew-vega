@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Legacy/internal c1-vega-plen install script for macOS and Linux.
-# Public macOS/Linux installs should use Homebrew:
-#   brew tap copernicusone/vega && brew install c1-vega-plen
+# c1-vega-plen install script for macOS and Linux.
 # Usage:
 #   curl -fsSL <INSTALL_SCRIPT_URL> | C1_VEGA_LICENSE_KEY=<key> bash
 # Modes (mutually exclusive): default install, --upgrade, --uninstall.
@@ -38,10 +36,7 @@ readonly REPO_ROOT_GUESS
 
 usage() {
   cat <<EOF
-Legacy/internal $BINARY_NAME install script for macOS and Linux.
-
-Public macOS/Linux installs should use Homebrew:
-  brew tap copernicusone/vega && brew install c1-vega-plen
+$BINARY_NAME install script for macOS and Linux.
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/copernicusone/homebrew-vega/main/$INSTALL_SCRIPT_NAME | C1_VEGA_LICENSE_KEY=<key> bash
