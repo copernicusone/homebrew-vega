@@ -42,11 +42,15 @@ class C1VegaEn < Formula
       Activate your license:
         c1-vega-en activate <your-license-key>
 
-      Then point Claude Code at the proxy:
-        export ANTHROPIC_BASE_URL="http://127.0.0.1:8787"
+      Install shell wrappers:
+        c1-vega-en install-shell
 
-      Start the proxy as a launchd service:
+      Open a new terminal and run `claude` or `codex`. The wrappers start Vega
+      on demand.
+
+      Advanced fixed-port mode for custom clients:
         brew services start c1-vega-en
+        export ANTHROPIC_BASE_URL="http://127.0.0.1:8787"
     EOS
   end
 
